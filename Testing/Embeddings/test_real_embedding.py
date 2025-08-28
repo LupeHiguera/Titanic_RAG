@@ -58,7 +58,8 @@ def test_real_embedding():
         print("✅ Caching works - second embedding call completed")
         
         print("\n🎉 All embedding tests passed with real API!")
-        return True
+        assert len(embedded_chunk.embedding) > 0
+        assert similarity >= 0.0
         
     except Exception as e:
         print(f"❌ Error testing embeddings: {e}")

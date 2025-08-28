@@ -14,11 +14,11 @@ class TestDocumentIngestion:
     
     @pytest.fixture
     def real_pdf_path(self):
-        return Path("../Text/one page.pdf")
+        return Path("Text/one page.pdf")
     
     @pytest.fixture
     def us_inquiry_pdf_path(self):
-        return Path("../Text/USInq.pdf")
+        return Path("Text/USInq.pdf")
     
     def test_extract_text_from_real_pdf(self, ingestion, real_pdf_path):
         """Test with actual one page.pdf file"""
@@ -108,8 +108,8 @@ class TestDocumentIngestion:
     def test_batch_process_multiple_pdfs(self, ingestion):
         """Test processing multiple PDFs at once"""
         pdf_paths = [
-            Path("../Text/one page.pdf"),
-            Path("../Text/USInq.pdf")
+            Path("Text/one page.pdf"),
+            Path("Text/USInq.pdf")
         ]
         
         # Filter to only existing files

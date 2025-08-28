@@ -1,9 +1,16 @@
 import pytest
 import numpy as np
 from unittest.mock import Mock, patch
+from pathlib import Path
+import sys
+
+# Add the root directory to path so we can import Services
+root_dir = Path(__file__).parent.parent.parent
+sys.path.append(str(root_dir))
 
 from Services.embeddings import EmbeddingService, EmbeddedChunk
-from Services.chunking import WitnessChunk, ChunkMetadata
+from Services.chunking import WitnessChunk, ChunkMetadata, IntelligentChunker
+from Services.document_ingestion import DocumentIngestion
 
 
 class TestEmbeddingService:
@@ -17,40 +24,65 @@ class TestEmbeddingService:
         )
     
     @pytest.fixture
-    def sample_chunks(self):
+    def real_chunks(self):
+        """Create real chunks from one page.pdf"""
+        # Extract real data
+        ingestion = DocumentIngestion()
+        chunker = IntelligentChunker(chunk_size=300, overlap_size=30)
+        
+        pdf_path = root_dir / "Text" / "one page.pdf"
+        if not pdf_path.exists():
+            pytest.skip("PDF file not found")
+        
+        result = ingestion.extract_text_from_pdf(pdf_path)
+        witnesses = ingestion.identify_witness_names(result["text"])
+        
+        witness_context = {
+            'witness': witnesses[0] if witnesses else 'Ismay',
+            'testimony': result["text"],
+            'page_number': 1,
+            'document_name': result["metadata"].document_name
+        }
+        
+        chunks = chunker.chunk_witness_contexts([witness_context])
+        return chunks[:2]  # Return first 2 chunks for testing
+    
+    @pytest.fixture
+    def mock_small_chunks(self):
+        """Smaller mock chunks for tests that need specific content"""
         metadata1 = ChunkMetadata(
-            document_name="British Inquiry Day 5",
-            source_type="british_inquiry",
-            page_number=247,
-            credibility_score=0.9,
+            document_name="US Senate Inquiry - Titanic Disaster",
+            source_type="us_inquiry",
+            page_number=1,
+            credibility_score=0.6,  # Basic score
             chunk_index=0,
             total_chunks_for_witness=2
         )
         
         metadata2 = ChunkMetadata(
-            document_name="US Senate Inquiry Day 12",
-            source_type="us_inquiry", 
-            page_number=891,
-            credibility_score=0.7,
-            chunk_index=0,
-            total_chunks_for_witness=1
+            document_name="US Senate Inquiry - Titanic Disaster",
+            source_type="us_inquiry",
+            page_number=1,
+            credibility_score=0.6,  # Basic score
+            chunk_index=1,
+            total_chunks_for_witness=2
         )
         
         return [
             WitnessChunk(
-                content="Q: What was your position? A: I was Second Officer. We lowered lifeboats in order, women and children first.",
-                witness_name="Charles Herbert Lightoller",
+                content="Senator SMITH. Mr. Ismay, what was your position on the Titanic? Mr. ISMAY. I was Managing Director of White Star Line.",
+                witness_name="Ismay",
                 metadata=metadata1
             ),
             WitnessChunk(
-                content="Q: Did you see men in lifeboats? A: Yes, I saw men getting into lifeboats when no women were nearby.",
-                witness_name="Hugh Woolner", 
+                content="Senator SMITH. Were you a voluntary passenger? Mr. ISMAY. A voluntary passenger, yes.",
+                witness_name="Ismay", 
                 metadata=metadata2
             )
         ]
     
-    @patch('embeddings.OpenAI')
-    def test_embed_single_chunk_returns_vector(self, mock_openai_class, embedding_service, sample_chunks):
+    @patch('Services.embeddings.OpenAI')
+    def test_embed_single_chunk_returns_vector(self, mock_openai_class, embedding_service, real_chunks):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
         
@@ -61,15 +93,15 @@ class TestEmbeddingService:
         # Recreate service to use mocked client
         embedding_service = EmbeddingService(api_key="test-key")
         
-        result = embedding_service.embed_chunk(sample_chunks[0])
+        result = embedding_service.embed_chunk(real_chunks[0])
         
         assert isinstance(result, EmbeddedChunk)
         assert isinstance(result.embedding, np.ndarray)
         assert len(result.embedding) == 1536  # OpenAI ada-002 dimension
-        assert result.chunk == sample_chunks[0]
+        assert result.chunk == real_chunks[0]
     
-    @patch('embeddings.OpenAI')
-    def test_embed_batch_chunks_maintains_order(self, mock_openai_class, embedding_service, sample_chunks):
+    @patch('Services.embeddings.OpenAI')
+    def test_embed_batch_chunks_maintains_order(self, mock_openai_class, embedding_service, real_chunks):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
         
@@ -83,11 +115,11 @@ class TestEmbeddingService:
         # Recreate service to use mocked client
         embedding_service = EmbeddingService(api_key="test-key")
         
-        results = embedding_service.embed_batch(sample_chunks)
+        results = embedding_service.embed_batch(real_chunks)
         
-        assert len(results) == len(sample_chunks)
-        assert results[0].chunk.witness_name == "Charles Herbert Lightoller"
-        assert results[1].chunk.witness_name == "Hugh Woolner"
+        assert len(results) == len(real_chunks)
+        assert results[0].chunk.witness_name == "Ismay"
+        assert results[1].chunk.witness_name == "Ismay"
     
     def test_embed_handles_empty_content(self, embedding_service):
         empty_chunk = WitnessChunk(
@@ -99,8 +131,8 @@ class TestEmbeddingService:
         with pytest.raises(ValueError, match="Cannot embed empty content"):
             embedding_service.embed_chunk(empty_chunk)
     
-    @patch('embeddings.OpenAI')
-    def test_embed_handles_api_rate_limiting(self, mock_openai_class, embedding_service, sample_chunks):
+    @patch('Services.embeddings.OpenAI')
+    def test_embed_handles_api_rate_limiting(self, mock_openai_class, embedding_service, mock_small_chunks):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
         
@@ -113,13 +145,13 @@ class TestEmbeddingService:
         embedding_service = EmbeddingService(api_key="test-key")
         
         with patch('time.sleep') as mock_sleep:
-            result = embedding_service.embed_chunk(sample_chunks[0])
+            result = embedding_service.embed_chunk(mock_small_chunks[0])
             
             assert mock_sleep.called
             assert isinstance(result, EmbeddedChunk)
     
-    @patch('embeddings.OpenAI')
-    def test_embed_chunk_preserves_metadata(self, mock_openai_class, embedding_service, sample_chunks):
+    @patch('Services.embeddings.OpenAI')
+    def test_embed_chunk_preserves_metadata(self, mock_openai_class, embedding_service, real_chunks):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
         
@@ -130,11 +162,11 @@ class TestEmbeddingService:
         # Recreate service to use mocked client
         embedding_service = EmbeddingService(api_key="test-key")
         
-        result = embedding_service.embed_chunk(sample_chunks[0])
+        result = embedding_service.embed_chunk(real_chunks[0])
         
-        assert result.chunk.metadata.document_name == "British Inquiry Day 5"
-        assert result.chunk.metadata.page_number == 247
-        assert result.chunk.witness_name == "Charles Herbert Lightoller"
+        assert result.chunk.metadata.document_name == "US Senate Inquiry - Titanic Disaster"
+        assert result.chunk.metadata.page_number == 1
+        assert result.chunk.witness_name == "Ismay"
     
     def test_cosine_similarity_calculation(self, embedding_service):
         vec1 = np.array([1, 0, 0])
@@ -147,8 +179,8 @@ class TestEmbeddingService:
         assert similarity_different == 0.0
         assert similarity_same == 1.0
     
-    @patch('embeddings.OpenAI')
-    def test_find_similar_chunks(self, mock_openai_class, embedding_service, sample_chunks):
+    @patch('Services.embeddings.OpenAI')
+    def test_find_similar_chunks(self, mock_openai_class, embedding_service, mock_small_chunks):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
         
@@ -162,7 +194,7 @@ class TestEmbeddingService:
         # Recreate service to use mocked client
         embedding_service = EmbeddingService(api_key="test-key")
         
-        embedded_chunks = embedding_service.embed_batch(sample_chunks)
+        embedded_chunks = embedding_service.embed_batch(mock_small_chunks)
         query_embedding = np.array([1.0] + [0.0] * 1535)
         
         similar_chunks = embedding_service.find_similar_chunks(
@@ -185,7 +217,7 @@ class TestEmbeddingService:
         assert len(batches) == 10
         assert all(len(batch) <= 100 for batch in batches)
     
-    @patch('embeddings.OpenAI')
+    @patch('Services.embeddings.OpenAI')
     def test_embed_with_different_providers(self, mock_openai_class):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
@@ -195,8 +227,6 @@ class TestEmbeddingService:
         mock_client.embeddings.create.return_value = mock_response
         
         openai_service = EmbeddingService(provider="openai", model="text-embedding-ada-002", api_key="test-key")
-        # Note: cohere_service would need separate implementation
-        cohere_service = EmbeddingService(provider="cohere", model="embed-english-v2.0", api_key="test-key")
         
         chunk = Mock()
         chunk.content = "test content"
@@ -205,8 +235,8 @@ class TestEmbeddingService:
         
         assert len(openai_result.embedding) == 1536
     
-    @patch('embeddings.OpenAI')
-    def test_embedding_cache_functionality(self, mock_openai_class, embedding_service, sample_chunks):
+    @patch('Services.embeddings.OpenAI')
+    def test_embedding_cache_functionality(self, mock_openai_class, embedding_service, mock_small_chunks):
         mock_client = Mock()
         mock_openai_class.return_value = mock_client
         
@@ -220,7 +250,48 @@ class TestEmbeddingService:
         with patch.object(embedding_service, '_get_from_cache', return_value=None) as mock_get, \
              patch.object(embedding_service, '_store_in_cache') as mock_store:
             
-            embedding_service.embed_chunk(sample_chunks[0])
+            embedding_service.embed_chunk(mock_small_chunks[0])
             
             mock_get.assert_called_once()
             mock_store.assert_called_once()
+    
+    def test_real_pdf_embedding_integration(self, embedding_service):
+        """Test that we can process real PDF content through the full pipeline"""
+        # Extract real data
+        ingestion = DocumentIngestion()
+        chunker = IntelligentChunker(chunk_size=200, overlap_size=20)
+        
+        pdf_path = root_dir / "Text" / "one page.pdf"
+        if not pdf_path.exists():
+            pytest.skip("PDF file not found")
+        
+        # Full pipeline test
+        result = ingestion.extract_text_from_pdf(pdf_path)
+        witnesses = ingestion.identify_witness_names(result["text"])
+        
+        witness_context = {
+            'witness': witnesses[0] if witnesses else 'Ismay',
+            'testimony': result["text"][:500],  # Use first 500 chars
+            'page_number': 1,
+            'document_name': result["metadata"].document_name
+        }
+        
+        chunks = chunker.chunk_witness_contexts([witness_context])
+        
+        # Verify chunks are created properly for embedding
+        assert len(chunks) > 0
+        for chunk in chunks:
+            assert isinstance(chunk, WitnessChunk)
+            assert len(chunk.content) > 0
+            assert chunk.witness_name == "Ismay"
+            assert "ismay" in chunk.content.lower() or "senator" in chunk.content.lower()
+            
+            # Test that chunks have the right structure for embedding
+            assert hasattr(chunk, 'content')
+            assert hasattr(chunk, 'witness_name')
+            assert hasattr(chunk, 'metadata')
+            assert hasattr(chunk.metadata, 'document_name')
+            assert hasattr(chunk.metadata, 'source_type')
+            
+        print(f"\n✅ Successfully created {len(chunks)} chunks from real PDF for embedding")
+        print(f"   Sample chunk: {chunks[0].content[:100]}...")

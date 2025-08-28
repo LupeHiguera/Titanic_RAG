@@ -1,7 +1,11 @@
 import pytest
 from pathlib import Path
 import sys
-sys.path.append('Services')
+import os
+
+# Add the root directory to path so we can import Services
+root_dir = Path(__file__).parent.parent.parent
+sys.path.append(str(root_dir))
 
 from Services.chunking import IntelligentChunker, WitnessChunk
 from Services.document_ingestion import DocumentIngestion
@@ -21,7 +25,7 @@ class TestIntelligentChunker:
     def real_pdf_data(self):
         """Extract real data from one page.pdf"""
         ingestion = DocumentIngestion()
-        pdf_path = Path("Text/one page.pdf")
+        pdf_path = root_dir / "Text" / "one page.pdf"
         
         if not pdf_path.exists():
             pytest.skip("PDF file not found")
@@ -184,7 +188,7 @@ class TestIntelligentChunker:
     def test_real_pdf_content_processing(self, chunker):
         """Test that we can actually process the real PDF content"""
         ingestion = DocumentIngestion()
-        pdf_path = Path("Text/one page.pdf")
+        pdf_path = root_dir / "Text" / "one page.pdf"
         
         if not pdf_path.exists():
             pytest.skip("PDF file not found")

@@ -4,7 +4,10 @@ Test chunking module with real PDF data from one page.pdf
 
 from pathlib import Path
 import sys
-sys.path.append('Services')
+
+# Add the root directory to path so we can import Services
+root_dir = Path(__file__).parent.parent.parent
+sys.path.append(str(root_dir))
 
 from Services.chunking import IntelligentChunker
 from Services.document_ingestion import DocumentIngestion
@@ -17,7 +20,7 @@ def test_chunking_with_real_pdf():
     chunker = IntelligentChunker(chunk_size=300, overlap_size=50)
     
     # Extract text from real PDF
-    pdf_path = Path("Text/one page.pdf")
+    pdf_path = root_dir / "Text" / "one page.pdf"
     if not pdf_path.exists():
         print("❌ PDF file not found")
         return False
@@ -78,7 +81,8 @@ def test_chunking_with_real_pdf():
         print("ℹ️ No contradictions found (expected for single witness)")
     
     print("\n🎉 All chunking tests passed with real data!")
-    return True
+    assert len(chunks) > 0
+    assert all(hasattr(chunk, 'content') for chunk in chunks)
 
 
 if __name__ == "__main__":
