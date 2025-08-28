@@ -50,11 +50,17 @@ class TestEmbeddingService:
             )
         ]
     
-    @patch('openai.Embedding.create')
-    def test_embed_single_chunk_returns_vector(self, mock_openai, embedding_service, sample_chunks):
+    @patch('embeddings.OpenAI')
+    def test_embed_single_chunk_returns_vector(self, mock_openai_class, embedding_service, sample_chunks):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
+        
         mock_response = Mock()
-        mock_response.data = [{'embedding': [0.1, 0.2, 0.3] * 512}]
-        mock_openai.return_value = mock_response
+        mock_response.data = [Mock(embedding=[0.1, 0.2, 0.3] * 512)]
+        mock_client.embeddings.create.return_value = mock_response
+        
+        # Recreate service to use mocked client
+        embedding_service = EmbeddingService(api_key="test-key")
         
         result = embedding_service.embed_chunk(sample_chunks[0])
         
@@ -63,14 +69,20 @@ class TestEmbeddingService:
         assert len(result.embedding) == 1536  # OpenAI ada-002 dimension
         assert result.chunk == sample_chunks[0]
     
-    @patch('openai.Embedding.create')
-    def test_embed_batch_chunks_maintains_order(self, mock_openai, embedding_service, sample_chunks):
+    @patch('embeddings.OpenAI')
+    def test_embed_batch_chunks_maintains_order(self, mock_openai_class, embedding_service, sample_chunks):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
+        
         mock_response = Mock()
         mock_response.data = [
-            {'embedding': [0.1] * 1536},
-            {'embedding': [0.2] * 1536}
+            Mock(embedding=[0.1] * 1536),
+            Mock(embedding=[0.2] * 1536)
         ]
-        mock_openai.return_value = mock_response
+        mock_client.embeddings.create.return_value = mock_response
+        
+        # Recreate service to use mocked client
+        embedding_service = EmbeddingService(api_key="test-key")
         
         results = embedding_service.embed_batch(sample_chunks)
         
@@ -88,12 +100,18 @@ class TestEmbeddingService:
         with pytest.raises(ValueError, match="Cannot embed empty content"):
             embedding_service.embed_chunk(empty_chunk)
     
-    @patch('openai.Embedding.create')
-    def test_embed_handles_api_rate_limiting(self, mock_openai, embedding_service, sample_chunks):
-        mock_openai.side_effect = [
+    @patch('embeddings.OpenAI')
+    def test_embed_handles_api_rate_limiting(self, mock_openai_class, embedding_service, sample_chunks):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
+        
+        mock_client.embeddings.create.side_effect = [
             Exception("Rate limit exceeded"),
-            Mock(data=[{'embedding': [0.1] * 1536}])
+            Mock(data=[Mock(embedding=[0.1] * 1536)])
         ]
+        
+        # Recreate service to use mocked client
+        embedding_service = EmbeddingService(api_key="test-key")
         
         with patch('time.sleep') as mock_sleep:
             result = embedding_service.embed_chunk(sample_chunks[0])
@@ -101,11 +119,17 @@ class TestEmbeddingService:
             assert mock_sleep.called
             assert isinstance(result, EmbeddedChunk)
     
-    @patch('openai.Embedding.create')
-    def test_embed_chunk_preserves_metadata(self, mock_openai, embedding_service, sample_chunks):
+    @patch('embeddings.OpenAI')
+    def test_embed_chunk_preserves_metadata(self, mock_openai_class, embedding_service, sample_chunks):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
+        
         mock_response = Mock()
-        mock_response.data = [{'embedding': [0.1] * 1536}]
-        mock_openai.return_value = mock_response
+        mock_response.data = [Mock(embedding=[0.1] * 1536)]
+        mock_client.embeddings.create.return_value = mock_response
+        
+        # Recreate service to use mocked client
+        embedding_service = EmbeddingService(api_key="test-key")
         
         result = embedding_service.embed_chunk(sample_chunks[0])
         
@@ -124,14 +148,20 @@ class TestEmbeddingService:
         assert similarity_different == 0.0
         assert similarity_same == 1.0
     
-    @patch('openai.Embedding.create')
-    def test_find_similar_chunks(self, mock_openai, embedding_service, sample_chunks):
+    @patch('embeddings.OpenAI')
+    def test_find_similar_chunks(self, mock_openai_class, embedding_service, sample_chunks):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
+        
         mock_response = Mock()
         mock_response.data = [
-            {'embedding': [1.0] + [0.0] * 1535},
-            {'embedding': [0.9] + [0.1] * 1535}
+            Mock(embedding=[1.0] + [0.0] * 1535),
+            Mock(embedding=[0.9] + [0.1] * 1535)
         ]
-        mock_openai.return_value = mock_response
+        mock_client.embeddings.create.return_value = mock_response
+        
+        # Recreate service to use mocked client
+        embedding_service = EmbeddingService(api_key="test-key")
         
         embedded_chunks = embedding_service.embed_batch(sample_chunks)
         query_embedding = np.array([1.0] + [0.0] * 1535)
@@ -156,12 +186,18 @@ class TestEmbeddingService:
         assert len(batches) == 10
         assert all(len(batch) <= 100 for batch in batches)
     
-    @patch('openai.Embedding.create')
-    def test_embed_with_different_providers(self, mock_openai):
-        openai_service = EmbeddingService(provider="openai", model="text-embedding-ada-002")
-        cohere_service = EmbeddingService(provider="cohere", model="embed-english-v2.0")
+    @patch('embeddings.OpenAI')
+    def test_embed_with_different_providers(self, mock_openai_class):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
         
-        mock_openai.return_value = Mock(data=[{'embedding': [0.1] * 1536}])
+        mock_response = Mock()
+        mock_response.data = [Mock(embedding=[0.1] * 1536)]
+        mock_client.embeddings.create.return_value = mock_response
+        
+        openai_service = EmbeddingService(provider="openai", model="text-embedding-ada-002", api_key="test-key")
+        # Note: cohere_service would need separate implementation
+        cohere_service = EmbeddingService(provider="cohere", model="embed-english-v2.0", api_key="test-key")
         
         chunk = Mock()
         chunk.content = "test content"
@@ -170,12 +206,20 @@ class TestEmbeddingService:
         
         assert len(openai_result.embedding) == 1536
     
-    def test_embedding_cache_functionality(self, embedding_service, sample_chunks):
+    @patch('embeddings.OpenAI')
+    def test_embedding_cache_functionality(self, mock_openai_class, embedding_service, sample_chunks):
+        mock_client = Mock()
+        mock_openai_class.return_value = mock_client
+        
+        mock_response = Mock()
+        mock_response.data = [Mock(embedding=[0.1] * 1536)]
+        mock_client.embeddings.create.return_value = mock_response
+        
+        # Recreate service to use mocked client
+        embedding_service = EmbeddingService(api_key="test-key")
+        
         with patch.object(embedding_service, '_get_from_cache', return_value=None) as mock_get, \
-             patch.object(embedding_service, '_store_in_cache') as mock_store, \
-             patch('openai.Embedding.create') as mock_openai:
-            
-            mock_openai.return_value = Mock(data=[{'embedding': [0.1] * 1536}])
+             patch.object(embedding_service, '_store_in_cache') as mock_store:
             
             embedding_service.embed_chunk(sample_chunks[0])
             
