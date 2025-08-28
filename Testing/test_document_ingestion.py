@@ -1,10 +1,9 @@
 import pytest
-from unittest.mock import Mock, patch, mock_open
 from pathlib import Path
 import tempfile
 import os
 
-from document_ingestion import DocumentIngestion, DocumentMetadata
+from Services.document_ingestion import DocumentIngestion, DocumentMetadata
 
 
 class TestDocumentIngestion:
@@ -15,7 +14,7 @@ class TestDocumentIngestion:
     
     @pytest.fixture
     def sample_pdf_path(self):
-        return Path("Text/USInq.pdf")
+        return Path("../Text/USInq.pdf")
     
     @pytest.fixture
     def expected_metadata(self):
@@ -110,7 +109,7 @@ class TestDocumentIngestion:
         assert isinstance(result["witnesses_identified"], list)
     
     def test_batch_process_documents_handles_multiple_files(self, ingestion):
-        file_paths = [Path("Text/USInq.pdf"), Path("Text/BritishInq.pdf")]
+        file_paths = [Path("../Text/USInq.pdf"), Path("Text/BritishInq.pdf")]
         
         results = ingestion.batch_process_documents(file_paths)
         

@@ -1,10 +1,9 @@
 import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
-from typing import List, Dict, Any
+from unittest.mock import Mock, patch
 
-from embeddings import EmbeddingService, EmbeddedChunk
-from chunking import WitnessChunk, ChunkMetadata
+from Services.embeddings import EmbeddingService, EmbeddedChunk
+from Services.chunking import WitnessChunk, ChunkMetadata
 
 
 class TestEmbeddingService:

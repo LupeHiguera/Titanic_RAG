@@ -3,11 +3,11 @@ import numpy as np
 import tempfile
 import shutil
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
-from vector_storage import VectorStore, ChromaVectorStore, PineconeVectorStore
-from embeddings import EmbeddedChunk
-from chunking import WitnessChunk, ChunkMetadata
+from vector_storage import ChromaVectorStore, PineconeVectorStore
+from Services.embeddings import EmbeddedChunk
+from Services.chunking import WitnessChunk, ChunkMetadata
 
 
 class TestVectorStore:

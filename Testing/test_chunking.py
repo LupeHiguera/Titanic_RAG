@@ -1,9 +1,7 @@
 import pytest
-from unittest.mock import Mock, patch
 from dataclasses import dataclass
-from typing import List, Dict, Any
 
-from chunking import IntelligentChunker, ChunkMetadata, WitnessChunk
+from Services.chunking import IntelligentChunker, WitnessChunk
 
 
 @dataclass

@@ -1,12 +1,11 @@
 import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
-from typing import List, Dict, Any
+from unittest.mock import Mock
 
 from semantic_search import SemanticSearchEngine, SearchResult, SearchQuery
-from embeddings import EmbeddingService, EmbeddedChunk
+from Services.embeddings import EmbeddingService, EmbeddedChunk
 from vector_storage import VectorStore
-from chunking import WitnessChunk, ChunkMetadata
+from Services.chunking import WitnessChunk, ChunkMetadata
 
 
 class TestSemanticSearchEngine:

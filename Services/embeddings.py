@@ -12,7 +12,7 @@ except ImportError:
     openai = None
     OpenAI = None
 
-from chunking import WitnessChunk
+from Services.chunking import WitnessChunk
 
 
 @dataclass

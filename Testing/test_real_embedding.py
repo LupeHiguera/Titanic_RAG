@@ -4,8 +4,8 @@ Run this after setting your OPENAI_API_KEY environment variable.
 """
 
 import os
-from embeddings import EmbeddingService
-from chunking import WitnessChunk, ChunkMetadata
+from Services.embeddings import EmbeddingService
+from Services.chunking import WitnessChunk, ChunkMetadata
 
 def test_real_embedding():
     # Check if API key is set
@@ -14,7 +14,7 @@ def test_real_embedding():
         print("❌ OPENAI_API_KEY environment variable not set")
         print("Please set it with: export OPENAI_API_KEY='your-key-here'")
         return False
-    
+
     try:
         # Create embedding service
         service = EmbeddingService(api_key=api_key)
