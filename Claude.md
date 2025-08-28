@@ -97,6 +97,7 @@ Testimony: "I saw men getting into lifeboats when there were no more women nearb
 - Multi-language sources or OCR pipeline  
 - Analytics dashboard or user accounts
 - Advanced ML models or custom embeddings
+- **Advanced witness credibility scoring** (currently using basic placeholder values)
 
 ## Definition of Done
 A deployed website where users can:
