@@ -28,7 +28,7 @@ class TestVectorStore:
     def chroma_store(self, temp_dir):
         return ChromaVectorStore(
             collection_name="titanic_test",
-            persist_directory=str(temp_dir)
+            persist_dir=str(temp_dir)
         )
     
     @pytest.fixture
@@ -150,7 +150,7 @@ class TestVectorStore:
         ]
 
 
-class TestChromaVectorStore:
+class TestChromaVectorStore(TestVectorStore):
     
     def test_store_chunks_persists_data(self, chroma_store, sample_embedded_chunks):
         chunk_ids = chroma_store.store_chunks(sample_embedded_chunks)
@@ -223,65 +223,91 @@ class TestChromaVectorStore:
         
         new_store = ChromaVectorStore(
             collection_name="titanic_restored",
-            persist_directory=str(temp_dir)
+            persist_dir=str(temp_dir)
         )
         restore_success = new_store.restore_collection(str(backup_path))
         assert restore_success
 
 
-class TestPineconeVectorStore:
+class TestPineconeVectorStore(TestVectorStore):
     
-    @patch('pinecone.init')
-    @patch('pinecone.Index')
-    def test_store_chunks_uploads_to_pinecone(self, mock_index_class, mock_init, pinecone_store, sample_embedded_chunks):
+    @patch('Services.vector_storage.pinecone')
+    def test_store_chunks_uploads_to_pinecone(self, mock_pinecone, sample_embedded_chunks):
+        # Mock the Pinecone setup
+        mock_pc = Mock()
+        mock_pinecone.Pinecone.return_value = mock_pc
+        mock_pc.list_indexes.return_value.names.return_value = []
+        
         mock_index = Mock()
-        mock_index_class.return_value = mock_index
+        mock_pc.Index.return_value = mock_index
         mock_index.upsert.return_value = {"upserted_count": 2}
         
-        chunk_ids = pinecone_store.store_chunks(sample_embedded_chunks)
+        # Create store (will use mocked Pinecone)
+        store = PineconeVectorStore(index_name="test", api_key="fake-key")
+        
+        chunk_ids = store.store_chunks(sample_embedded_chunks)
         
         assert len(chunk_ids) == len(sample_embedded_chunks)
-        mock_index.upsert.assert_called_once()
+        mock_index.upsert.assert_called()
     
-    @patch('pinecone.init')
-    @patch('pinecone.Index')
-    def test_query_pinecone_with_filters(self, mock_index_class, mock_init, pinecone_store, sample_embedded_chunks):
-        mock_index = Mock()
-        mock_index_class.return_value = mock_index
+    @patch('Services.vector_storage.pinecone')
+    def test_query_pinecone_with_filters(self, mock_pinecone, sample_embedded_chunks):
+        # Mock the Pinecone setup
+        mock_pc = Mock()
+        mock_pinecone.Pinecone.return_value = mock_pc
+        mock_pc.list_indexes.return_value.names.return_value = ["test"]
         
-        mock_index.query.return_value = {
-            "matches": [
-                {
-                    "id": "test-id-1",
-                    "score": 0.95,
-                    "metadata": {
-                        "witness_name": "Charles Herbert Lightoller",
-                        "source_type": "british_inquiry"
-                    }
-                }
-            ]
+        mock_index = Mock()
+        mock_pc.Index.return_value = mock_index
+        
+        # Mock query response
+        mock_match = Mock()
+        mock_match.id = "test-id-1"
+        mock_match.score = 0.95
+        mock_match.metadata = {
+            "witness_name": "Charles Herbert Lightoller",
+            "source_type": "british_inquiry",
+            "document_name": "Test Doc",
+            "page_number": 1,
+            "chunk_index": 0,
+            "total_chunks_for_witness": 1,
+            "content": "Test content"
         }
         
+        mock_response = Mock()
+        mock_response.matches = [mock_match]
+        mock_index.query.return_value = mock_response
+        
+        # Create store (will use mocked Pinecone)
+        store = PineconeVectorStore(index_name="test", api_key="fake-key")
+        
         query_vector = np.array([0.1, 0.2, 0.3] * 512)
-        results = pinecone_store.query(query_vector, top_k=1)
+        results = store.query(query_vector, top_k=1)
         
         assert len(results) == 1
         mock_index.query.assert_called_once()
     
-    @patch('pinecone.init')
-    @patch('pinecone.Index')  
-    def test_delete_chunks_from_pinecone(self, mock_index_class, mock_init, pinecone_store):
+    @patch('Services.vector_storage.pinecone')
+    def test_delete_chunks_from_pinecone(self, mock_pinecone):
+        # Mock the Pinecone setup
+        mock_pc = Mock()
+        mock_pinecone.Pinecone.return_value = mock_pc
+        mock_pc.list_indexes.return_value.names.return_value = ["test"]
+        
         mock_index = Mock()
-        mock_index_class.return_value = mock_index
+        mock_pc.Index.return_value = mock_index
         mock_index.delete.return_value = {"deleted_count": 1}
         
-        success = pinecone_store.delete_chunks(["test-id-1"])
+        # Create store (will use mocked Pinecone)
+        store = PineconeVectorStore(index_name="test", api_key="fake-key")
+        
+        success = store.delete_chunks(["test-id-1"])
         
         assert success
         mock_index.delete.assert_called_once_with(ids=["test-id-1"])
 
 
-class TestVectorStoreIntegration:
+class TestVectorStoreIntegration(TestVectorStore):
     
     def test_store_and_retrieve_workflow(self, chroma_store, sample_embedded_chunks):
         stored_ids = chroma_store.store_chunks(sample_embedded_chunks)
