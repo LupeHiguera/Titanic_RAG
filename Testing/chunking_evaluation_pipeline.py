@@ -81,23 +81,24 @@ class ChunkingEvaluationPipeline:
     
     def _load_ismay_testimony(self) -> Dict[str, Any]:
         """Load the actual Ismay testimony data for testing"""
+        # Prioritize Data.pdf as it has more comprehensive content
         data_pdf_path = root_dir / "Text" / "Data.pdf"
-        if not data_pdf_path.exists():
-            # Fallback to one page.pdf
-            pdf_path = root_dir / "Text" / "one page.pdf"
-            if pdf_path.exists():
-                result = self.ingestion.extract_text_from_pdf(pdf_path)
-                witnesses = self.ingestion.identify_witness_names(result["text"])
-                return {
-                    'text': result["text"],
-                    'witnesses': witnesses,
-                    'document_name': result["metadata"].document_name
-                }
-        else:
+        if data_pdf_path.exists():
             result = self.ingestion.extract_text_from_pdf(data_pdf_path)
             witnesses = self.ingestion.identify_witness_names(result["text"])
             return {
                 'text': result["text"], 
+                'witnesses': witnesses,
+                'document_name': result["metadata"].document_name
+            }
+        
+        # Fallback to one page.pdf
+        pdf_path = root_dir / "Text" / "one page.pdf"
+        if pdf_path.exists():
+            result = self.ingestion.extract_text_from_pdf(pdf_path)
+            witnesses = self.ingestion.identify_witness_names(result["text"])
+            return {
+                'text': result["text"],
                 'witnesses': witnesses,
                 'document_name': result["metadata"].document_name
             }
@@ -112,21 +113,39 @@ class ChunkingEvaluationPipeline:
                 query="Ismay age",
                 type=QueryType.BIOGRAPHICAL,
                 expected_info=["50", "December 12th", "12th of December"],
+                should_not_contain=["was"],  # Avoid over-weighting common words
                 description="Should find Ismay's age and birthday information"
             ),
             
             GoldenQuery(
-                query="Ismay position", 
+                query="Ismay position title", 
                 type=QueryType.BIOGRAPHICAL,
                 expected_info=["Managing Director", "White Star Line", "Ship owner"],
+                should_not_contain=["was", "what"],  # Focus on actual titles
                 description="Should find Ismay's role and company"
             ),
             
             GoldenQuery(
-                query="Ismay residence",
+                query="Ismay residence Liverpool",
                 type=QueryType.BIOGRAPHICAL, 
                 expected_info=["Liverpool"],
+                should_not_contain=["was"],
                 description="Should find Ismay's place of residence"
+            ),
+            
+            # NEW COMPREHENSIVE BIOGRAPHICAL QUERIES
+            GoldenQuery(
+                query="Ismay room number accommodation",
+                type=QueryType.BIOGRAPHICAL,
+                expected_info=["B-52", "B deck", "suite", "main companionway"],
+                description="Should find Ismay's specific room and location on ship"
+            ),
+            
+            GoldenQuery(
+                query="Charles Hayes passenger friend",
+                type=QueryType.BIOGRAPHICAL,
+                expected_info=["Charles M. Hayes", "known him for some years", "not among the saved"],
+                description="Should find information about passengers Ismay knew"
             ),
             
             # FACTUAL QUERIES - Test retrieval of specific facts
@@ -152,6 +171,42 @@ class ChunkingEvaluationPipeline:
                 description="Should find lifeboat occupancy in Ismay's boat"
             ),
             
+            # NEW COMPREHENSIVE FACTUAL QUERIES
+            GoldenQuery(
+                query="ship construction Belfast trials",
+                type=QueryType.FACTUAL,
+                expected_info=["built in Belfast", "entirely satisfactory", "not built by contract", "commission"],
+                description="Should find ship construction and trial details"
+            ),
+            
+            GoldenQuery(
+                query="lifeboat count wooden collapsible",
+                type=QueryType.FACTUAL,
+                expected_info=["20 altogether", "sixteen wooden boats", "four collapsible"],
+                description="Should find specific lifeboat numbers and types"
+            ),
+            
+            GoldenQuery(
+                query="Thomas Andrews age experience",
+                type=QueryType.FACTUAL,
+                expected_info=["42 or 43 years", "representative of builders", "large experience", "Unfortunately, no"],
+                description="Should find Andrews details and his fate"
+            ),
+            
+            GoldenQuery(
+                query="collision location starboard iceberg",
+                type=QueryType.FACTUAL,
+                expected_info=["between the breakwater and the bridge", "starboard side", "struck ice"],
+                description="Should find precise collision location details"
+            ),
+            
+            GoldenQuery(
+                query="wireless messages operator contact",
+                type=QueryType.FACTUAL,
+                expected_info=["I did not", "no messages", "reserve power", "I believe there was"],
+                description="Should find Ismay's lack of wireless involvement"
+            ),
+            
             # PROCEDURAL QUERIES - Test understanding of procedures
             GoldenQuery(
                 query="lifeboat loading procedure",
@@ -165,6 +220,28 @@ class ChunkingEvaluationPipeline:
                 type=QueryType.PROCEDURAL,
                 expected_info=["went to bridge", "found captain", "struck ice", "get boats out"],
                 description="Should find sequence of actions after collision"
+            ),
+            
+            # NEW PROCEDURAL QUERIES
+            GoldenQuery(
+                query="Ismay departure lifeboat final moments",
+                type=QueryType.PROCEDURAL,
+                expected_info=["no response", "no passengers left", "officer called out", "being lowered away"],
+                description="Should find the detailed circumstances of Ismay's departure"
+            ),
+            
+            GoldenQuery(
+                query="captain bridge communication orders",
+                type=QueryType.PROCEDURAL,
+                expected_info=["lower the boats", "simply turned around", "left the bridge"],
+                description="Should find captain's orders and communication"
+            ),
+            
+            GoldenQuery(
+                query="lifeboat crew quartermaster seamen",
+                type=QueryType.PROCEDURAL,
+                expected_info=["four of the crew", "quartermaster", "ship's people"],
+                description="Should find crew composition in lifeboats"
             ),
             
             # TEMPORAL QUERIES - Test time-based information
@@ -182,6 +259,28 @@ class ChunkingEvaluationPipeline:
                 description="Should find departure and arrival timing"
             ),
             
+            # NEW TEMPORAL QUERIES  
+            GoldenQuery(
+                query="Ismay ship duration hour quarter collision",
+                type=QueryType.TEMPORAL,
+                expected_info=["hour and a quarter", "almost until she sank", "practically until the time"],
+                description="Should find how long Ismay stayed on ship after collision"
+            ),
+            
+            GoldenQuery(
+                query="lifeboat sea four hours Carpathia rescue",
+                type=QueryType.TEMPORAL,
+                expected_info=["four hours", "Jacob's ladder", "little ripple"],
+                description="Should find rescue timing and sea conditions"
+            ),
+            
+            GoldenQuery(
+                query="women rowing lifeboat night morning hours",
+                type=QueryType.TEMPORAL,
+                expected_info=["10:30 o'clock", "7:30 o'clock", "next morning", "no knowledge"],
+                description="Should find timeline of women rowing lifeboats"
+            ),
+            
             # CONTRADICTION QUERIES - Test ability to preserve conflicting info
             GoldenQuery(
                 query="ice warnings knowledge",
@@ -197,6 +296,24 @@ class ChunkingEvaluationPipeline:
                 expected_info=["Never", "did not consult", "arranged", "5 o'clock Wednesday"],
                 expected_contradictions=True,
                 description="Should capture both no consultation but some pre-arrangement"
+            ),
+            
+            # NEW CONTRADICTION QUERIES
+            GoldenQuery(
+                query="ship speed full capacity never reached",
+                type=QueryType.CONTRADICTION,
+                expected_info=["never had been at full speed", "75 revolutions", "full speed is 78"],
+                should_not_contain=["was at full speed", "going at full speed"],
+                expected_contradictions=True, 
+                description="Should capture speed contradiction - never at full speed vs. stated intentions"
+            ),
+            
+            GoldenQuery(
+                query="lifeboat manning adequate insufficient women rowing",
+                type=QueryType.CONTRADICTION,
+                expected_info=["complement of oarsmen", "women were obliged to row", "no knowledge"],
+                expected_contradictions=True,
+                description="Should capture conflicting info about lifeboat manning adequacy"
             ),
             
             # WITNESS IDENTIFICATION - Test witness name preservation
@@ -222,6 +339,31 @@ class ChunkingEvaluationPipeline:
                 type=QueryType.FACTUAL,
                 expected_info=["did not", "I did not see", "no messages"],
                 description="Should preserve negative statements about wireless interaction"
+            ),
+            
+            # SEARCH QUALITY TESTS - Address specific search issues like "was" over-emphasis
+            GoldenQuery(
+                query="What was Ismay's position",  # This matches user's actual problematic query
+                type=QueryType.BIOGRAPHICAL,
+                expected_info=["Managing Director", "White Star Line", "Ship owner"],
+                should_not_contain=["was wrong", "was not", "was in"],  # Filter out irrelevant "was" contexts
+                description="Should find position without over-weighting common words like 'was'"
+            ),
+            
+            GoldenQuery(
+                query="life preservers passengers wearing safety",
+                type=QueryType.FACTUAL,
+                expected_info=["Nearly all passengers", "life preservers on", "all that I saw"],
+                should_not_contain=["was", "were"], # Focus on factual content not connecting words
+                description="Should find safety equipment facts without common word interference"
+            ),
+            
+            GoldenQuery(
+                query="struggle jostling men women lifeboat boarding",
+                type=QueryType.FACTUAL, 
+                expected_info=["I saw none", "no struggle", "no attempt by men"],
+                should_not_contain=["was", "were"],
+                description="Should find behavioral observations without filler words"
             )
         ]
     
