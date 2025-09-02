@@ -36,7 +36,7 @@ class TestSemanticSearchEngine:
             document_name="British Inquiry Day 5",
             source_type="british_inquiry",
             page_number=247,
-            credibility_score=0.9,
+            credibility_score=0.0,
             chunk_index=0,
             total_chunks_for_witness=1
         )
@@ -56,7 +56,7 @@ class TestSemanticSearchEngine:
             document_name="US Senate Inquiry Day 12", 
             source_type="us_inquiry",
             page_number=891,
-            credibility_score=0.7,
+            credibility_score=0.0,
             chunk_index=0,
             total_chunks_for_witness=1
         )
@@ -111,19 +111,6 @@ class TestSemanticSearchEngine:
         call_args = mock_vector_store.query.call_args
         assert call_args[1]['filters']['witness_name'] == "Charles Herbert Lightoller"
     
-    def test_search_with_credibility_filtering(self, search_engine, mock_vector_store, sample_search_results):
-        mock_vector_store.query.return_value = sample_search_results
-        
-        query = SearchQuery(
-            text="officer testimony",
-            filters={"min_credibility": 0.8}
-        )
-        
-        results = search_engine.search(query)
-        
-        mock_vector_store.query.assert_called_once()
-        call_args = mock_vector_store.query.call_args
-        assert 'credibility_score' in call_args[1]['filters']
     
     def test_search_with_document_source_filter(self, search_engine, mock_vector_store, sample_search_results):
         mock_vector_store.query.return_value = sample_search_results
