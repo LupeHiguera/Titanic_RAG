@@ -21,7 +21,7 @@ class WitnessChunk:
 
 
 class IntelligentChunker:
-    def __init__(self, chunk_size: int = 500, overlap_size: int = 50, preserve_witness_context: bool = True):
+    def __init__(self, chunk_size: int = 800, overlap_size: int = 80, preserve_witness_context: bool = True):
         self.chunk_size = chunk_size
         self.overlap_size = overlap_size
         self.preserve_witness_context = preserve_witness_context
