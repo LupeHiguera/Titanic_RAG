@@ -231,6 +231,49 @@
             font-size: 0.9rem;
         }
 
+        .witness-dropdown {
+            position: relative;
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .witness-dropdown.show {
+            display: block;
+        }
+
+        .witness-option {
+            padding: 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s;
+        }
+
+        .witness-option:hover,
+        .witness-option.selected {
+            background-color: #f8f9fa;
+        }
+
+        .witness-option.highlighted {
+            background-color: #e3f2fd;
+        }
+
+        .witness-option:last-child {
+            border-bottom: none;
+        }
+
+        .no-witnesses {
+            padding: 10px;
+            color: #666;
+            font-style: italic;
+            text-align: center;
+        }
+
         @media (max-width: 768px) {
             .form-row {
                 grid-template-columns: 1fr;
@@ -272,9 +315,8 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="witnessName">Filter by Witness (optional)</label>
-                        <select id="witnessName" name="witnessName">
-                            <option value="">All witnesses</option>
-                        </select>
+                        <input type="text" id="witnessName" name="witnessName" placeholder="Type to search witnesses..." autocomplete="off">
+                        <div id="witnessDropdown" class="witness-dropdown"></div>
                     </div>
 
                     <div class="form-group">
@@ -329,11 +371,13 @@
     <script>
         // Global variables
         let availableWitnesses = [];
+        let selectedWitness = '';
 
         // Initialize the application
         async function initApp() {
             await checkSystemHealth();
-            await loadAvailableDocuments();
+            await loadAvailableWitnesses();
+            setupWitnessAutocomplete();
         }
 
         // Check system health
@@ -355,25 +399,138 @@
             }
         }
 
-        // Load available documents and populate filters
-        async function loadAvailableDocuments() {
+        // Load available witnesses from new API endpoint
+        async function loadAvailableWitnesses() {
             try {
-                const response = await fetch('/documents');
+                const response = await fetch('/witnesses');
                 const data = await response.json();
                 
-                // Populate witness filter
-                const witnessSelect = document.getElementById('witnessName');
-                availableWitnesses = data.unique_witnesses || [];
-                
-                availableWitnesses.forEach(witness => {
-                    const option = document.createElement('option');
-                    option.value = witness;
-                    option.textContent = witness;
-                    witnessSelect.appendChild(option);
-                });
+                availableWitnesses = data.witnesses || [];
+                console.log(`Loaded ${availableWitnesses.length} witnesses`);
                 
             } catch (error) {
-                console.error('Failed to load documents:', error);
+                console.error('Failed to load witnesses:', error);
+                availableWitnesses = [];
+            }
+        }
+
+        // Setup witness autocomplete functionality
+        function setupWitnessAutocomplete() {
+            const witnessInput = document.getElementById('witnessName');
+            const witnessDropdown = document.getElementById('witnessDropdown');
+            let debounceTimer;
+            let currentHighlight = -1;
+            let filteredWitnesses = [];
+
+            // Handle input changes (with debouncing)
+            witnessInput.addEventListener('input', function(e) {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    const query = e.target.value.trim();
+                    searchWitnesses(query);
+                }, 200);
+            });
+
+            // Handle keyboard navigation
+            witnessInput.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    navigateOptions(1);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    navigateOptions(-1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (currentHighlight >= 0 && filteredWitnesses[currentHighlight]) {
+                        selectWitness(filteredWitnesses[currentHighlight]);
+                    }
+                } else if (e.key === 'Escape') {
+                    hideDropdown();
+                }
+            });
+
+            // Hide dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!witnessInput.contains(e.target) && !witnessDropdown.contains(e.target)) {
+                    hideDropdown();
+                }
+            });
+
+            async function searchWitnesses(query) {
+                if (!query) {
+                    hideDropdown();
+                    selectedWitness = '';
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/witnesses?search=${encodeURIComponent(query)}`);
+                    const data = await response.json();
+                    filteredWitnesses = data.witnesses || [];
+                    
+                    displayWitnessOptions(filteredWitnesses);
+                    
+                } catch (error) {
+                    console.error('Witness search failed:', error);
+                    hideDropdown();
+                }
+            }
+
+            function displayWitnessOptions(witnesses) {
+                currentHighlight = -1;
+                
+                if (witnesses.length === 0) {
+                    witnessDropdown.innerHTML = '<div class="no-witnesses">No witnesses found</div>';
+                    witnessDropdown.classList.add('show');
+                    return;
+                }
+
+                const optionsHtml = witnesses.map((witness, index) => 
+                    `<div class="witness-option" data-index="${index}" data-witness="${witness}">${witness}</div>`
+                ).join('');
+
+                witnessDropdown.innerHTML = optionsHtml;
+                witnessDropdown.classList.add('show');
+
+                // Add click handlers to options
+                witnessDropdown.querySelectorAll('.witness-option').forEach(option => {
+                    option.addEventListener('click', () => {
+                        selectWitness(option.dataset.witness);
+                    });
+                });
+            }
+
+            function navigateOptions(direction) {
+                if (filteredWitnesses.length === 0) return;
+
+                // Remove previous highlight
+                const prevHighlighted = witnessDropdown.querySelector('.witness-option.highlighted');
+                if (prevHighlighted) {
+                    prevHighlighted.classList.remove('highlighted');
+                }
+
+                // Calculate new highlight index
+                currentHighlight += direction;
+                if (currentHighlight < 0) currentHighlight = filteredWitnesses.length - 1;
+                if (currentHighlight >= filteredWitnesses.length) currentHighlight = 0;
+
+                // Add new highlight
+                const options = witnessDropdown.querySelectorAll('.witness-option');
+                if (options[currentHighlight]) {
+                    options[currentHighlight].classList.add('highlighted');
+                    options[currentHighlight].scrollIntoView({ block: 'nearest' });
+                }
+            }
+
+            function selectWitness(witness) {
+                selectedWitness = witness;
+                witnessInput.value = witness;
+                hideDropdown();
+            }
+
+            function hideDropdown() {
+                witnessDropdown.classList.remove('show');
+                currentHighlight = -1;
             }
         }
 
@@ -408,7 +565,7 @@
                     query: query,
                     top_k: parseInt(document.getElementById('topK').value),
                     similarity_threshold: parseFloat(document.getElementById('threshold').value),
-                    witness_name: document.getElementById('witnessName').value || null,
+                    witness_name: selectedWitness || null,
                     source_type: document.getElementById('sourceType').value || null
                 };
 
