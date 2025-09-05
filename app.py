@@ -4,15 +4,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
-import os
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
-
 from Services.semantic_search import SemanticSearchEngine, SearchQuery
 from Services.embeddings import EmbeddingService
 from Services.vector_storage import ChromaVectorStore
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Titanic Historical RAG", description="Search Titanic witness testimonies")
 
@@ -30,6 +28,7 @@ embedding_service = None
 vector_store = ChromaVectorStore()
 search_engine = None
 
+
 def get_search_engine():
     """Initialize search engine lazily with proper error handling."""
     global embedding_service, search_engine
@@ -39,9 +38,11 @@ def get_search_engine():
             search_engine = SemanticSearchEngine(embedding_service, vector_store)
         except ValueError as e:
             if "API key" in str(e):
-                raise HTTPException(status_code=500, detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
+                raise HTTPException(status_code=500,
+                                    detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
             raise HTTPException(status_code=500, detail=f"Failed to initialize search engine: {str(e)}")
     return search_engine
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -50,15 +51,18 @@ class SearchRequest(BaseModel):
     witness_name: Optional[str] = None
     source_type: Optional[str] = None
 
+
 class SearchResponse(BaseModel):
     query: str
     results: List[Dict[str, Any]]
     total_results: int
 
+
 @app.get("/")
 async def root():
     """Serve the main HTML page."""
     return FileResponse("static/index.html")
+
 
 @app.get("/health")
 async def health_check():
@@ -73,6 +77,7 @@ async def health_check():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"System unhealthy: {str(e)}")
 
+
 @app.post("/search", response_model=SearchResponse)
 async def search_documents(request: SearchRequest):
     """Search historical documents."""
@@ -83,7 +88,7 @@ async def search_documents(request: SearchRequest):
             filters["witness_name"] = request.witness_name
         if request.source_type:
             filters["source_type"] = request.source_type
-        
+
         # Create search query
         search_query = SearchQuery(
             text=request.query,
@@ -91,11 +96,11 @@ async def search_documents(request: SearchRequest):
             filters=filters,
             similarity_threshold=request.similarity_threshold
         )
-        
+
         # Get search engine and perform search
         engine = get_search_engine()
         results = engine.search(search_query)
-        
+
         # Format results for frontend
         formatted_results = []
         for result in results:
@@ -108,17 +113,18 @@ async def search_documents(request: SearchRequest):
                 "relevance_score": round(result.relevance_score, 3),
                 "explanation": result.relevance_explanation
             })
-        
+
         return SearchResponse(
             query=request.query,
             results=formatted_results,
             total_results=len(formatted_results)
         )
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
 
 @app.get("/documents")
 async def get_documents():
@@ -137,9 +143,43 @@ async def get_documents():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get documents: {str(e)}")
 
+
+@app.get("/witnesses")
+async def get_witnesses(search: Optional[str] = None):
+    """Get list of witnesses, optionally filtered by search term."""
+    try:
+        # Get all chunks with metadata only (efficient, no content)
+        all_data = vector_store.collection.get(include=["metadatas"])
+
+        # Extract unique witness names
+        unique_witnesses = set()
+        if all_data and "metadatas" in all_data and all_data["metadatas"]:
+            for metadata in all_data["metadatas"]:
+                witness_name = metadata.get("witness_name", "")
+                if witness_name and witness_name.strip():
+                    unique_witnesses.add(witness_name.strip())
+
+        # Convert to sorted list
+        witness_list = sorted(list(unique_witnesses))
+
+        # Filter by search term if provided
+        if search and search.strip():
+            search_lower = search.strip().lower()
+            witness_list = [w for w in witness_list if search_lower in w.lower()]
+
+        return {
+            "witnesses": witness_list,
+            "total_count": len(witness_list)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get witnesses: {str(e)}")
+
+
 # Mount static files
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
