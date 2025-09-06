@@ -2,6 +2,11 @@ import pytest
 from pathlib import Path
 import tempfile
 import os
+import sys
+
+# Add the root directory to path
+root_dir = Path(__file__).parent.parent.parent
+sys.path.append(str(root_dir))
 
 from Services.document_ingestion import DocumentIngestion, DocumentMetadata
 

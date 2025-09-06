@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """Test witness name extraction from actual data."""
 
-from Services.vector_storage import ChromaVectorStore
-from Services.document_ingestion import DocumentIngestion
+import sys
 from pathlib import Path
 import re
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Add the root directory to path
+root_dir = Path(__file__).parent.parent.parent
+sys.path.append(str(root_dir))
+
+from Services.vector_storage import ChromaVectorStore
+from Services.document_ingestion import DocumentIngestion
 
 def test_current_database():
     """Test what witness names are currently in the database."""

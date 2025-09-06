@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Add the root directory to path
-root_dir = Path(__file__).parent
+root_dir = Path(__file__).parent.parent.parent
 sys.path.append(str(root_dir))
 
 from Services.document_ingestion import DocumentIngestion

@@ -3,6 +3,10 @@ import numpy as np
 from unittest.mock import Mock, patch
 from pathlib import Path
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add the root directory to path so we can import Services
 root_dir = Path(__file__).parent.parent.parent

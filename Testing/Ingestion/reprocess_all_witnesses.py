@@ -3,6 +3,13 @@
 
 import re
 from pathlib import Path
+import sys
+from pathlib import Path
+
+# Add the root directory to path
+root_dir = Path(__file__).parent.parent.parent
+sys.path.append(str(root_dir))
+
 from Services.document_ingestion import DocumentIngestion
 from Services.chunking import IntelligentChunker
 from Services.embeddings import EmbeddingService, EmbeddedChunk
