@@ -22,9 +22,10 @@ class EmbeddedChunk:
 
 
 class EmbeddingService:
-    def __init__(self, provider: str = "openai", model: str = "text-embedding-ada-002", api_key: Optional[str] = None):
+    def __init__(self, provider: str = "openai", model: str = "text-embedding-3-large", api_key: Optional[str] = None, dimensions: int = 1024):
         self.provider = provider
         self.model = model
+        self.dimensions = dimensions
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self._cache: Dict[str, np.ndarray] = {}
         
@@ -92,7 +93,8 @@ class EmbeddingService:
                 if self.provider == "openai":
                     response = self.client.embeddings.create(
                         input=text,
-                        model=self.model
+                        model=self.model,
+                        dimensions=self.dimensions
                     )
                     embedding = np.array(response.data[0].embedding)
                     return embedding
@@ -137,7 +139,7 @@ class EmbeddingService:
     
     def _get_cache_key(self, text: str) -> str:
         """Generate cache key for text."""
-        return hashlib.md5(f"{self.model}:{text}".encode()).hexdigest()
+        return hashlib.md5(f"{self.model}:{self.dimensions}:{text}".encode()).hexdigest()
     
     def _get_from_cache(self, cache_key: str) -> Optional[np.ndarray]:
         """Get embedding from cache."""

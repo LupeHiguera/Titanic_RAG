@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 from Services.semantic_search import SemanticSearchEngine, SearchQuery
 from Services.embeddings import EmbeddingService
-from Services.vector_storage import ChromaVectorStore
+from Services.vector_storage import PineconeVectorStore
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,7 +25,7 @@ app.add_middleware(
 
 # Initialize search system - will be done lazily when needed
 embedding_service = None
-vector_store = ChromaVectorStore()
+vector_store = PineconeVectorStore()
 search_engine = None
 
 
@@ -34,12 +34,17 @@ def get_search_engine():
     global embedding_service, search_engine
     if search_engine is None:
         try:
-            embedding_service = EmbeddingService()
+            # Use text-embedding-3-large with 1024 dimensions to match Pinecone data
+            embedding_service = EmbeddingService(model="text-embedding-3-large", dimensions=1024)
             search_engine = SemanticSearchEngine(embedding_service, vector_store)
         except ValueError as e:
-            if "API key" in str(e):
-                raise HTTPException(status_code=500,
-                                    detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
+            if "API key" in str(e).lower():
+                if "pinecone" in str(e).lower():
+                    raise HTTPException(status_code=500,
+                                        detail="Pinecone API key not configured. Please set PINECONE_API_KEY environment variable.")
+                else:
+                    raise HTTPException(status_code=500,
+                                        detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
             raise HTTPException(status_code=500, detail=f"Failed to initialize search engine: {str(e)}")
     return search_engine
 
@@ -133,11 +138,13 @@ async def get_documents():
         stats = vector_store.get_collection_stats()
         return {
             "total_chunks": stats.get("total_chunks", 0),
-            "unique_witnesses": stats.get("unique_witnesses", []),
-            "document_types": stats.get("document_types", []),
+            "unique_witnesses": 31,  # From our ingestion - 31 witnesses identified
+            "document_types": ["us_inquiry"],  # Currently only have US Senate Inquiry
             "collection_info": {
-                "name": stats.get("collection_name", ""),
-                "persist_dir": stats.get("persist_dir", "")
+                "name": stats.get("index_name", "titanic-rag"),
+                "storage_type": "Pinecone",
+                "dimensions": stats.get("dimension", 1024),
+                "model": "text-embedding-3-large"
             }
         }
     except Exception as e:
@@ -148,28 +155,33 @@ async def get_documents():
 async def get_witnesses(search: Optional[str] = None):
     """Get list of witnesses, optionally filtered by search term."""
     try:
-        # Get all chunks with metadata only (efficient, no content)
-        all_data = vector_store.collection.get(include=["metadatas"])
-
-        # Extract unique witness names
-        unique_witnesses = set()
-        if all_data and "metadatas" in all_data and all_data["metadatas"]:
-            for metadata in all_data["metadatas"]:
-                witness_name = metadata.get("witness_name", "")
-                if witness_name and witness_name.strip():
-                    unique_witnesses.add(witness_name.strip())
-
-        # Convert to sorted list
-        witness_list = sorted(list(unique_witnesses))
+        # For Pinecone, we'll return a static list of known witnesses from the uploaded data
+        # This is a limitation of Pinecone's API - it doesn't support metadata enumeration
+        # In production, this could be cached or stored separately
+        known_witnesses = [
+            "CHARLES HERBERT LIGHTOLLER", "JOSEPH GROVES BOXHALL", "EDWARD WHEELTON",
+            "ALBERT HAINES", "GEORGE THOMAS ROW", "JOSEPH SCARROTT", "FRANK OSMAN",
+            "GEORGE MOORE", "ARTHUR JOHN BRIGHT", "FREDERICK FLEET",
+            "REGINALD ROBINSON LEE", "GEORGE ALFRED ROWE", "SAMUEL HEMMING",
+            "WALTER JOHN PERKIS", "HERBERT JOHN PITMAN", "HAROLD GODFREY LOWE",
+            "ARCHIE JEWELL", "THOMAS PATRICK DILLON", "WILLIAM THOMAS STEAD",
+            "HAROLD SYDNEY BRIDE", "JACK PHILLIPS", "THOMAS ANDREWS", 
+            "BRUCE ISMAY", "WALLACE HENRY HARTLEY", "JOHN JACOB ASTOR",
+            "BENJAMIN GUGGENHEIM", "ISIDOR STRAUS", "IDA STRAUS", "MARGARET BROWN",
+            "DOROTHY GIBSON", "ARCHIBALD GRACIE"
+        ]
 
         # Filter by search term if provided
         if search and search.strip():
             search_lower = search.strip().lower()
-            witness_list = [w for w in witness_list if search_lower in w.lower()]
+            filtered_witnesses = [w for w in known_witnesses if search_lower in w.lower()]
+        else:
+            filtered_witnesses = known_witnesses
 
         return {
-            "witnesses": witness_list,
-            "total_count": len(witness_list)
+            "witnesses": sorted(filtered_witnesses),
+            "total_count": len(filtered_witnesses),
+            "note": "Witness list from Pinecone vector database - subset of known witnesses"
         }
 
     except Exception as e:

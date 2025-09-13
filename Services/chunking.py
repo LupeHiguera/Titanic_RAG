@@ -256,3 +256,91 @@ class IntelligentChunker:
         base_confidence = 0.6
         
         return min(0.9, base_confidence + (credibility_factor * 0.3))
+    
+    def chunk_document_by_witness(self, text: str, document_metadata) -> List[WitnessChunk]:
+        """Extract witnesses from document text and chunk by witness testimony."""
+        
+        # Step 1: Extract witness contexts from raw text
+        witness_contexts = self._extract_witness_contexts_from_text(text, document_metadata)
+        
+        # Step 2: Chunk the witness contexts
+        return self.chunk_witness_contexts(witness_contexts)
+    
+    def _extract_witness_contexts_from_text(self, text: str, document_metadata) -> List[Dict[str, Any]]:
+        """Extract witness testimonies from raw document text."""
+        contexts = []
+        
+        # Pattern to find testimony sections
+        # Look for "TESTIMONY OF [NAME]" or similar patterns
+        testimony_pattern = r'TESTIMONY OF ([A-Z\s]+?)\.?\s*\n(.*?)(?=TESTIMONY OF|$)'
+        matches = re.findall(testimony_pattern, text, re.DOTALL | re.IGNORECASE)
+        
+        for witness_name, testimony in matches:
+            witness_name = witness_name.strip()
+            testimony = testimony.strip()
+            
+            if len(testimony) > 100:  # Only include substantial testimonies
+                contexts.append({
+                    'witness': witness_name,
+                    'testimony': testimony,
+                    'page_number': 1,  # We don't have page-level info from raw text
+                    'document_name': document_metadata.document_name
+                })
+        
+        # If no formal testimony sections found, try question-answer format
+        if not contexts:
+            contexts = self._extract_qa_contexts_from_text(text, document_metadata)
+        
+        return contexts
+    
+    def _extract_qa_contexts_from_text(self, text: str, document_metadata) -> List[Dict[str, Any]]:
+        """Extract witness contexts from Q&A format text."""
+        contexts = []
+        current_witness = None
+        current_testimony = []
+        
+        # Split into lines and process
+        lines = text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Look for speaker patterns: "Senator SMITH." or "Mr. LIGHTOLLER."
+            speaker_match = re.match(r'(Senator|Mr\.|Mrs\.|Miss)\s+([A-Z][A-Z\s]*[A-Z])\.\s*(.*)', line)
+            
+            if speaker_match:
+                title, name, content = speaker_match.groups()
+                
+                # If this is a new witness (not Senator), save previous and start new
+                if title != 'Senator':
+                    if current_witness and current_testimony:
+                        contexts.append({
+                            'witness': current_witness,
+                            'testimony': ' '.join(current_testimony),
+                            'page_number': 1,
+                            'document_name': document_metadata.document_name
+                        })
+                    
+                    current_witness = name.strip()
+                    current_testimony = [content] if content else []
+                else:
+                    # This is a question, add to current testimony
+                    if current_testimony:
+                        current_testimony.append(line)
+            else:
+                # Continuation of testimony
+                if current_testimony:
+                    current_testimony.append(line)
+        
+        # Don't forget the last witness
+        if current_witness and current_testimony:
+            contexts.append({
+                'witness': current_witness,
+                'testimony': ' '.join(current_testimony),
+                'page_number': 1,
+                'document_name': document_metadata.document_name
+            })
+        
+        return contexts

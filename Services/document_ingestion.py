@@ -48,16 +48,86 @@ class DocumentIngestion:
             raise ValueError(f"Error reading PDF {pdf_path}: {e}")
     
     def _clean_extracted_text(self, text: str) -> str:
-        """Clean extracted PDF text of artifacts."""
-        # Remove excessive whitespace
-        text = re.sub(r'\n+', '\n', text)
-        text = re.sub(r' +', ' ', text)
+        """Clean extracted PDF text of OCR artifacts and formatting issues."""
         
-        # Remove form feed characters and other artifacts
+        # Step 1: Remove form feed and control characters
         text = text.replace('\f', '\n')
         text = text.replace('\x0c', '\n')
         
-        # Strip leading/trailing whitespace
+        # Step 2: Fix markdown-like artifacts (** bold formatting)
+        # Simply remove ** and handle the specific "IDID" case later
+        text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+        
+        # Step 3: Fix broken names with spaces (common OCR issue)
+        # Names like "N EWLANDS", "S MITH", "L IGHTOLLER", "I SMAY"
+        # Be more specific to avoid merging regular words
+        text = re.sub(r'\b([A-Z]) ([A-Z][A-Z]+)\b', r'\1\2', text)  # Only ALL CAPS surnames
+        
+        # Step 4: Fix broken words with spaces in middle - be more conservative
+        # "brother -in-law" → "brother-in-law" (hyphenated words)
+        text = re.sub(r'\b(\w+) - ?(\w+)\b', r'\1-\2', text)
+        
+        # Fix specific broken words we know about
+        broken_words = {
+            ' at tention': ' attention',
+            ' at tention ': ' attention ',
+            'at tention': 'attention',
+        }
+        for wrong, correct in broken_words.items():
+            text = text.replace(wrong, correct)
+        
+        # Step 5: Fix random capitalization of common words and specific artifacts
+        # Keep proper nouns but fix obvious errors like "DID"
+        # Use word boundaries to avoid changing proper nouns
+        common_word_fixes = [
+            (r'\bIDID\b', 'I did'),   # Fix "IDID" artifact from "I **DID**"
+            (r'\bI DID\b', 'I did'),  # Fix "I DID" 
+            (r'\bDID\b', 'did'),
+            (r'\bNOT\b(?!\s+[A-Z])', 'not'),  # Don't change "NOT GUILTY" etc.
+            (r'\bTHE\b(?!\s+[A-Z])', 'the'),
+            (r'\bAND\b(?!\s+[A-Z])', 'and'),
+            (r'\bOR\b(?!\s+[A-Z])', 'or'),
+            (r'\bBUT\b(?!\s+[A-Z])', 'but'),
+            (r'\bWAS\b(?!\s+[A-Z])', 'was'),
+            (r'\bWERE\b(?!\s+[A-Z])', 'were'),
+            (r'\bHAD\b(?!\s+[A-Z])', 'had'),
+            (r'\bHAVE\b(?!\s+[A-Z])', 'have'),
+            (r'\bHAS\b(?!\s+[A-Z])', 'has'),
+            (r'\bWOULD\b(?!\s+[A-Z])', 'would'),
+            (r'\bCOULD\b(?!\s+[A-Z])', 'could'),
+            (r'\bSHOULD\b(?!\s+[A-Z])', 'should'),
+        ]
+        
+        for pattern, replacement in common_word_fixes:
+            text = re.sub(pattern, replacement, text)
+        
+        # Step 6: Fix specific ALL CAPS words that should be normal case
+        # LIFEBOAT, SHIP, etc. - but be careful not to change names
+        caps_words_to_fix = [
+            (r'\bLIFEBOAT\b', 'lifeboat'),
+            (r'\bSHIP\b(?!\s+[A-Z])', 'ship'),
+            (r'\bBOAT\b(?!\s+[A-Z])', 'boat'),
+            (r'\bWATER\b(?!\s+[A-Z])', 'water'),
+        ]
+        
+        for pattern, replacement in caps_words_to_fix:
+            text = re.sub(pattern, replacement, text)
+        
+        # Step 7: Normalize excessive whitespace but preserve paragraph structure
+        text = re.sub(r' +', ' ', text)  # Multiple spaces to single space
+        text = re.sub(r'\n +', '\n', text)  # Remove leading spaces on lines
+        text = re.sub(r' +\n', '\n', text)  # Remove trailing spaces on lines
+        text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
+        
+        # Step 8: Clean up punctuation spacing
+        text = re.sub(r' +([,.!?;:])', r'\1', text)  # Remove space before punctuation
+        text = re.sub(r'([.!?]) +([A-Z])', r'\1 \2', text)  # Ensure space after sentence end
+        
+        # Step 9: Fix quotation marks spacing
+        text = re.sub(r' +"', '"', text)  # Remove space before opening quote
+        text = re.sub(r'" +', '" ', text)  # Ensure space after closing quote
+        
+        # Step 10: Strip leading/trailing whitespace
         text = text.strip()
         
         return text

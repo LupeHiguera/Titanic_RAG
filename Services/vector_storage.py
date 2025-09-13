@@ -4,6 +4,10 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Optional
 import os
 import json
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 try:
     import chromadb
@@ -12,9 +16,9 @@ except ImportError:
     chromadb = None
 
 try:
-    import pinecone
+    import pinecone as pc_client
 except ImportError:
-    pinecone = None
+    pc_client = None
 
 from Services.embeddings import EmbeddedChunk
 from Services.chunking import WitnessChunk, ChunkMetadata
@@ -295,50 +299,48 @@ class ChromaVectorStore(VectorStore):
 class PineconeVectorStore(VectorStore):
     """Pinecone implementation for production cloud storage."""
     
-    def __init__(self, index_name: str = "titanic-prod", api_key: Optional[str] = None, environment: str = "us-east1-gcp"):
-        if pinecone is None:
+    def __init__(self, index_name: Optional[str] = None, api_key: Optional[str] = None, environment: Optional[str] = None):
+        if pc_client is None:
             raise ImportError("pinecone package is required but not installed")
         
-        self.index_name = index_name
+        self.index_name = index_name or os.getenv("PINECONE_INDEX_NAME", "titanic-rag")
         self.api_key = api_key or os.getenv("PINECONE_API_KEY")
+        self.environment = environment or os.getenv("PINECONE_ENVIRONMENT", "us-east1-gcp")
         
         if not self.api_key:
             raise ValueError("Pinecone API key is required but not provided")
         
         # Initialize Pinecone client
         try:
-            # Try newer API first
-            if hasattr(pinecone, 'Pinecone'):
-                pc = pinecone.Pinecone(api_key=self.api_key)
-                
-                # Create or connect to index
-                if index_name not in pc.list_indexes().names():
-                    pc.create_index(
-                        name=index_name,
-                        dimension=1536,  # OpenAI ada-002 embedding dimension
-                        metric="cosine"
+            from pinecone import Pinecone, ServerlessSpec
+            
+            # Create Pinecone instance
+            pc = Pinecone(api_key=self.api_key)
+            
+            # List existing indexes
+            existing_indexes = [index.name for index in pc.list_indexes()]
+            
+            # Create index if it doesn't exist
+            if self.index_name not in existing_indexes:
+                print(f"Creating new Pinecone index: {self.index_name}")
+                pc.create_index(
+                    name=self.index_name,
+                    dimension=1024,  # OpenAI text-embedding-3-large with reduced dimensions
+                    metric="cosine",
+                    spec=ServerlessSpec(
+                        cloud='aws',
+                        region=self.environment  # Use environment from config
                     )
-                
-                self.index = pc.Index(index_name)
+                )
+                print(f"Index {self.index_name} created successfully")
             else:
-                # Fallback for older API
-                pinecone.init(api_key=self.api_key, environment=environment)
-                
-                if index_name not in pinecone.list_indexes():
-                    pinecone.create_index(
-                        name=index_name,
-                        dimension=1536,
-                        metric="cosine"
-                    )
-                
-                self.index = pinecone.Index(index_name)
+                print(f"Using existing Pinecone index: {self.index_name}")
+            
+            self.index = pc.Index(self.index_name)
         except Exception as e:
-            # For testing - create a basic mock-like object
-            self.index = type('MockIndex', (), {
-                'upsert': lambda *args, **kwargs: {"upserted_count": 0},
-                'query': lambda *args, **kwargs: type('MockResponse', (), {'matches': []})(),
-                'delete': lambda *args, **kwargs: {"deleted_count": 0}
-            })()
+            # Print the actual error for debugging
+            print(f"Pinecone initialization failed: {e}")
+            raise e  # Re-raise the exception instead of creating mock object
     
     def store_chunks(self, embedded_chunks: List[EmbeddedChunk]) -> List[str]:
         """Store embedded chunks in Pinecone and return their IDs."""
@@ -435,9 +437,17 @@ class PineconeVectorStore(VectorStore):
     
     def get_collection_stats(self) -> Dict[str, Any]:
         """Get index statistics."""
-        stats = self.index.describe_index_stats()
-        return {
-            "total_chunks": stats.total_vector_count,
-            "index_name": self.index_name,
-            "dimension": stats.dimension
-        }
+        try:
+            stats = self.index.describe_index_stats()
+            return {
+                "total_chunks": stats.get('total_vector_count', 0),
+                "index_name": self.index_name,
+                "dimension": stats.get('dimension', 1024)
+            }
+        except Exception as e:
+            return {
+                "total_chunks": 0,
+                "index_name": self.index_name,
+                "dimension": 1024,
+                "error": str(e)
+            }
