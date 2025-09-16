@@ -194,37 +194,200 @@ class DocumentIngestion:
         return "other"
     
     def identify_witness_names(self, text: str) -> List[str]:
-        """Identify witness names from inquiry text."""
+        """Identify witness names from US Senate Inquiry Q&A format."""
         witnesses = []
         
-        # Patterns for witness introduction lines
-        patterns = [
-            r'Mr\.\s+([A-Z][A-Za-z\s]+),?\s*being duly sworn',
-            r'Mr\.\s+([A-Z\s]+)\.\s*[A-Z]',
-            r'([A-Z][A-Z\s]+),?\s*recalled',
-            r'([A-Z][A-Z\s]+),?\s*sworn',
-            r'Mr\.\s+([A-Z][A-Za-z\s]+)\s*testified',
-            # Handle spaced names like "I SMAY" -> "Ismay"
-            r'Mr\.\s+([I]\s+[A-Z]+[A-Z\s]*)\.',
+        # Step 1: Find testimony sections marked by brackets
+        testimony_sections = self._find_testimony_sections(text)
+        
+        # Step 2: Extract witnesses from Q&A dialogue in each section
+        for section in testimony_sections:
+            section_witnesses = self._extract_witnesses_from_qa_section(section)
+            for witness in section_witnesses:
+                if witness not in witnesses:
+                    witnesses.append(witness)
+        
+        # Step 3: Handle recalled witnesses format
+        recalled_witnesses = self._find_recalled_witnesses(text)
+        for witness in recalled_witnesses:
+            if witness not in witnesses:
+                witnesses.append(witness)
+        
+        return witnesses
+    
+    def _find_testimony_sections(self, text: str) -> List[str]:
+        """Find testimony sections marked by bracketed headers."""
+        sections = []
+        
+        # Pattern: [Testimony taken before Senator...]
+        section_pattern = r'\[([Tt]estimony taken[^]]*)\](.*?)(?=\[[Tt]estimony taken|$)'
+        matches = re.findall(section_pattern, text, re.DOTALL)
+        
+        for header, content in matches:
+            if content.strip():
+                sections.append(content.strip())
+        
+        # If no bracketed sections found, treat entire text as one section
+        if not sections and text.strip():
+            sections = [text]
+        
+        return sections
+    
+    def _extract_witnesses_from_qa_section(self, section_text: str) -> List[str]:
+        """Extract witness names from Q&A dialogue section."""
+        witnesses = []
+        
+        # Look for pattern: The witness was sworn by... followed by Q&A
+        # Then find name in responses like "Mr. LOWE. Harold Godfrey Lowe."
+        
+        # Pattern 1: Extract name from direct name responses only
+        # Look for specific pattern: "Mr. SURNAME. FirstName MiddleName LastName"
+        lines = section_text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # Skip senator lines
+            if line.startswith('Senator'):
+                continue
+            
+            # Very specific pattern: "Mr. SURNAME. Full Name" where Full Name is 2-4 words of proper names
+            name_match = re.match(r'(Mr\.|Captain)\s+([A-Z\s]+)\.\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*\.?\s*$', line)
+            if name_match:
+                title, surname, full_name = name_match.groups()
+                
+                # Validate that full_name looks like a real name
+                name_words = full_name.split()
+                
+                # Enhanced validation for real names
+                invalid_words = ['able', 'bodied', 'seaman', 'officer', 'years', 'old', 'street', 'road', 
+                               'managing', 'director', 'york', 'company', 'line', 'limited', 'corporation',
+                               'department', 'service', 'station', 'building', 'office', 'united', 'states']
+                
+                if (len(name_words) >= 2 and 
+                    all(word[0].isupper() and word[1:].islower() for word in name_words) and
+                    not any(word.lower() in invalid_words for word in name_words) and
+                    # Additional check: at least one word should be 3+ characters (real names)
+                    any(len(word) >= 3 for word in name_words)):
+                    
+                    clean_name = self._clean_witness_name(full_name)
+                    if clean_name and clean_name not in witnesses:
+                        witnesses.append(clean_name)
+        
+        # Pattern 2: If no full names found, extract from surname and guess
+        if not witnesses:
+            witnesses_from_context = self._extract_witnesses_from_qa_context(section_text)
+            witnesses.extend(witnesses_from_context)
+        
+        return witnesses
+    
+    def _extract_witnesses_from_qa_context(self, section_text: str) -> List[str]:
+        """Extract witnesses by analyzing Q&A context to avoid senators."""
+        witnesses = []
+        lines = section_text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Skip any line that starts with "Senator" 
+            if line.startswith('Senator'):
+                continue
+            
+            # Check for witness responses (Mr./Captain/etc.) but NOT senator responses
+            witness_match = re.match(r'(Mr\.|Captain)\s+([A-Z\s]+)\.', line)
+            if witness_match:
+                title, surname = witness_match.groups()
+                clean_surname = self._clean_witness_name(surname)
+                
+                # Additional filtering: common senator surnames to avoid
+                senator_surnames = ['SMITH', 'BOURNE', 'FLETCHER', 'PERKINS']
+                if clean_surname.upper() in senator_surnames:
+                    continue
+                
+                if (clean_surname and len(clean_surname.strip()) > 2):
+                    # Map to full name if possible
+                    full_name = self._map_surname_to_full_name(clean_surname)
+                    if full_name and full_name not in witnesses:
+                        witnesses.append(full_name)
+        
+        return witnesses
+    
+    def _find_recalled_witnesses(self, text: str) -> List[str]:
+        """Find witnesses in 'recalled' format: HAROLD GODFREY LOWE, recalled."""
+        witnesses = []
+        
+        # Pattern: "NAME, recalled" or "NAME (recalled)"
+        recalled_patterns = [
+            r'([A-Z][A-Z\s]+),\s*recalled',
+            r'([A-Z][A-Z\s]+)\s*\(recalled\)',
+            r'([A-Z][A-Z\s]+),?\s*recalled\.',
         ]
         
-        for pattern in patterns:
-            matches = re.findall(pattern, text)
+        for pattern in recalled_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
             for match in matches:
-                name = match.strip().rstrip(',')
-                # Clean up the name and fix spacing issues
-                name = self._fix_spaced_name(name)
-                name = re.sub(r'\s+', ' ', name)
-                if len(name) > 2 and name not in witnesses:
-                    witnesses.append(name)
+                clean_name = self._clean_witness_name(match)
+                if clean_name and clean_name not in witnesses:
+                    witnesses.append(clean_name)
         
-        # Remove duplicates while preserving order
-        unique_witnesses = []
-        for witness in witnesses:
-            if witness not in unique_witnesses:
-                unique_witnesses.append(witness)
+        return witnesses
+    
+    def _clean_witness_name(self, name: str) -> str:
+        """Clean and standardize witness names."""
+        if not name:
+            return ""
         
-        return unique_witnesses
+        # Remove extra spaces and punctuation
+        name = re.sub(r'[,.]', '', name.strip())
+        name = re.sub(r'\s+', ' ', name)
+        
+        # Fix OCR spacing issues like "C HARLES HERBERT LIGHTOLLER"
+        name = self._fix_spaced_name(name)
+        
+        # Convert to title case if all caps
+        if name.isupper():
+            name = name.title()
+        
+        return name.strip()
+    
+    def _map_surname_to_full_name(self, surname: str) -> str:
+        """Map surname to full name using known witness list."""
+        # Known mappings from witness.pdf
+        surname_mapping = {
+            'ISMAY': 'Bruce Ismay',
+            'LIGHTOLLER': 'Charles Herbert Lightoller', 
+            'LOWE': 'Harold Godfrey Lowe',
+            'BOXHALL': 'Joseph Groves Boxhall',
+            'PITMAN': 'Herbert John Pitman',
+            'FLEET': 'Frederick Fleet',
+            'CLENCH': 'Frederick Clench',
+            'ROSTRON': 'Arthur Henry Rostron',
+            'COTTAM': 'Harold Thomas Cottam',
+            'BRIDE': 'Harold Sydney Bride',
+            'CRAWFORD': 'Alfred Crawford',
+            'BUCKLEY': 'Daniel Buckley',
+            'ETCHES': 'Henry Samuel Etches',
+            'CROWE': 'George Frederick Crowe',
+            'BULEY': 'Edward John Buley',
+            'EVANS': 'Cyril Furmstone Evans',
+            'HAINES': 'Albert Haines',
+            'HARDY': 'John Hardy',
+            'JONES': 'Thomas Jones',
+            'WHEELTON': 'Edward Wheelton',
+            'WARD': 'William Ward',
+            'PERKIS': 'Walter John Perkis',
+            'GILL': 'Ernest Gill',
+            'COLLINS': 'John Collins',
+            'ABELSETH': 'Olaus Abelseth',
+            'WIDGERY': 'James Widgery',
+            'CUNNINGHAM': 'Andrew Cunningham',
+            'BURKE': 'William Burke',
+            'DAULER': 'Frederick Dauler',
+        }
+        
+        surname_clean = surname.upper().strip()
+        return surname_mapping.get(surname_clean, surname)
     
     def _fix_spaced_name(self, name: str) -> str:
         """Fix names that have been spaced out by PDF extraction."""

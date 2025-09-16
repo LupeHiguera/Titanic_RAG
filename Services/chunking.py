@@ -294,53 +294,155 @@ class IntelligentChunker:
         return contexts
     
     def _extract_qa_contexts_from_text(self, text: str, document_metadata) -> List[Dict[str, Any]]:
-        """Extract witness contexts from Q&A format text."""
+        """Extract witness contexts from US Senate Q&A format text."""
+        contexts = []
+        
+        # Find testimony sections marked by brackets
+        testimony_sections = self._find_testimony_sections(text)
+        
+        for section in testimony_sections:
+            section_contexts = self._extract_witnesses_from_section(section, document_metadata)
+            contexts.extend(section_contexts)
+        
+        return contexts
+    
+    def _find_testimony_sections(self, text: str) -> List[str]:
+        """Find testimony sections marked by bracketed headers."""
+        sections = []
+        
+        # Pattern: [Testimony taken before Senator...]
+        section_pattern = r'\[([Tt]estimony taken[^]]*)\](.*?)(?=\[[Tt]estimony taken|$)'
+        matches = re.findall(section_pattern, text, re.DOTALL)
+        
+        for header, content in matches:
+            if content.strip():
+                sections.append(content.strip())
+        
+        # If no bracketed sections found, treat entire text as one section
+        if not sections and text.strip():
+            sections = [text]
+        
+        return sections
+    
+    def _extract_witnesses_from_section(self, section_text: str, document_metadata) -> List[Dict[str, Any]]:
+        """Extract witness contexts from a single testimony section."""
         contexts = []
         current_witness = None
         current_testimony = []
+        witness_full_name = None
         
-        # Split into lines and process
-        lines = text.split('\n')
+        lines = section_text.split('\n')
         
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-                
+            
+            # Look for "The witness was sworn by..." pattern
+            if re.search(r'[Tt]he witness was sworn by', line):
+                continue
+            
             # Look for speaker patterns: "Senator SMITH." or "Mr. LIGHTOLLER."
-            speaker_match = re.match(r'(Senator|Mr\.|Mrs\.|Miss)\s+([A-Z][A-Z\s]*[A-Z])\.\s*(.*)', line)
+            speaker_match = re.match(r'(Senator|Mr\.|Mrs\.|Miss|Captain)\s+([A-Z][A-Z\s]*[A-Z]*)\.\s*(.*)', line)
             
             if speaker_match:
                 title, name, content = speaker_match.groups()
                 
                 # If this is a new witness (not Senator), save previous and start new
                 if title != 'Senator':
+                    # Save previous witness if exists
                     if current_witness and current_testimony:
                         contexts.append({
-                            'witness': current_witness,
+                            'witness': witness_full_name or current_witness,
                             'testimony': ' '.join(current_testimony),
                             'page_number': 1,
                             'document_name': document_metadata.document_name
                         })
                     
-                    current_witness = name.strip()
-                    current_testimony = [content] if content else []
+                    # Start new witness
+                    current_witness = self._clean_witness_name(name.strip())
+                    current_testimony = []
+                    witness_full_name = None
+                    
+                    # Check if content contains the full name
+                    if content:
+                        full_name = self._extract_full_name_from_response(content)
+                        if full_name:
+                            witness_full_name = full_name
+                        current_testimony.append(f"{title} {name}. {content}")
                 else:
-                    # This is a question, add to current testimony
-                    if current_testimony:
+                    # This is a Senator question, add to current testimony
+                    if current_testimony is not None:
                         current_testimony.append(line)
             else:
                 # Continuation of testimony
-                if current_testimony:
+                if current_testimony is not None:
                     current_testimony.append(line)
         
         # Don't forget the last witness
         if current_witness and current_testimony:
             contexts.append({
-                'witness': current_witness,
+                'witness': witness_full_name or current_witness,
                 'testimony': ' '.join(current_testimony),
                 'page_number': 1,
                 'document_name': document_metadata.document_name
             })
         
         return contexts
+    
+    def _extract_full_name_from_response(self, response_text: str) -> str:
+        """Extract full name from witness response."""
+        # Pattern for full names: "Harold Godfrey Lowe" or "Charles Herbert Lightoller"
+        name_patterns = [
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]*)*\s+[A-Z][a-z]+)',  # "Harold Godfrey Lowe"
+            r'([A-Z][A-Z\s]+)',  # "HAROLD GODFREY LOWE" (all caps)
+        ]
+        
+        for pattern in name_patterns:
+            matches = re.findall(pattern, response_text)
+            for match in matches:
+                clean_name = self._clean_witness_name(match)
+                # Validate it looks like a full name (at least 2 words)
+                if clean_name and len(clean_name.split()) >= 2:
+                    return clean_name
+        
+        return None
+    
+    def _clean_witness_name(self, name: str) -> str:
+        """Clean and standardize witness names."""
+        if not name:
+            return ""
+        
+        # Remove extra spaces and punctuation
+        name = re.sub(r'[,.]', '', name.strip())
+        name = re.sub(r'\s+', ' ', name)
+        
+        # Fix OCR spacing issues like "C HARLES HERBERT LIGHTOLLER"
+        name = self._fix_spaced_name(name)
+        
+        # Convert to title case if all caps
+        if name.isupper():
+            name = name.title()
+        
+        return name.strip()
+    
+    def _fix_spaced_name(self, name: str) -> str:
+        """Fix names with OCR spacing issues."""
+        # Common OCR fixes
+        fixes = {
+            'C Harles Herbert Lightoller': 'Charles Herbert Lightoller',
+            'L Ightoller': 'Lightoller',
+            'I Smay': 'Ismay',
+            'B Oxhall': 'Boxhall',
+            'R Ostron': 'Rostron',
+        }
+        
+        for broken, fixed in fixes.items():
+            if broken.lower() in name.lower():
+                return fixed
+        
+        # General fix for single spaced letters: "C HARLES" -> "CHARLES"
+        if re.match(r'^[A-Z]\s+[A-Z\s]+$', name):
+            return re.sub(r'\s+', '', name)
+        
+        return name
