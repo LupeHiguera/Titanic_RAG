@@ -55,8 +55,29 @@ class DocumentIngestion:
         text = text.replace('\x0c', '\n')
         
         # Step 2: Fix markdown-like artifacts (** bold formatting)
-        # Simply remove ** and handle the specific "IDID" case later
+        # Handle both complete bold phrases and broken words with bold in middle
+        
+        # First, fix words broken by bold formatting: "ano**THE**r" → "another"
+        # This handles common broken words where bold formatting splits them
+        broken_word_patterns = [
+            (r'ano\*\*THE\*\*r', 'another'),
+            (r'far\*\*THE\*\*r', 'farther'),
+            (r'o\*\*THE\*\*r', 'other'),
+            (r'mo\*\*THE\*\*r', 'mother'),
+            (r'bro\*\*THE\*\*r', 'brother'),
+            (r'wea\*\*THE\*\*r', 'weather'),
+            (r'ga\*\*THE\*\*r', 'gather'),
+            (r'fea\*\*THE\*\*r', 'feather'),
+            (r'lea\*\*THE\*\*r', 'leather'),
+            # Add more as needed
+        ]
+        
+        for pattern, replacement in broken_word_patterns:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        
+        # Then remove all remaining ** bold formatting
         text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+        text = re.sub(r'\*\*', '', text)  # Remove any remaining ** symbols
         
         # Step 3: Fix broken names with spaces (common OCR issue)
         # Names like "N EWLANDS", "S MITH", "L IGHTOLLER", "I SMAY"
@@ -75,6 +96,35 @@ class DocumentIngestion:
         }
         for wrong, correct in broken_words.items():
             text = text.replace(wrong, correct)
+        
+        # Step 4b: Automatic OCR spacing error correction using regex patterns
+        # First, apply known OCR fixes explicitly
+        known_ocr_fixes = {
+            'w hat': 'what',
+            'mu ch': 'much', 
+            'dir ection': 'direction',
+            'exp ected': 'expected',
+            'Britis h': 'British',
+            'britis h': 'british',
+            'sta ndard': 'standard',
+            'tel egraphist': 'telegraphist',
+            'COTTA M': 'COTTAM',
+            'cotta m': 'cottam',
+            'Cotta m': 'Cottam',
+            'Sena tor': 'Senator',
+            'sena tor': 'senator'
+        }
+        
+        for wrong, correct in known_ocr_fixes.items():
+            text = text.replace(wrong, correct)
+        
+        # Then apply general pattern-based fixes for remaining OCR patterns
+        def fix_word_spacing(match):
+            word1, word2 = match.groups()
+            return self._should_join_words(word1, word2)
+        
+        # Pattern: word + space + 1-3 letters (case insensitive)
+        text = re.sub(r'\b([a-zA-Z]{2,})\s([a-zA-Z]{1,3})\b', fix_word_spacing, text)
         
         # Step 5: Fix random capitalization of common words and specific artifacts
         # Keep proper nouns but fix obvious errors like "DID"
@@ -420,6 +470,112 @@ class DocumentIngestion:
             return known_names.get(reconstructed, name)
         
         return name
+    
+    def _should_join_words(self, word1: str, word2: str) -> str:
+        """Determine if two word parts should be joined to fix OCR spacing errors."""
+        
+        # Don't join very short first words
+        if len(word1) <= 2:
+            return f"{word1} {word2}"
+        
+        phrase = f"{word1} {word2}".lower()
+        joined = word1 + word2
+        
+        # Always join if it creates known words that are commonly broken by OCR
+        known_ocr_fixes = {
+            'w hat': 'what',
+            'mu ch': 'much', 
+            'su ch': 'such',
+            'whi ch': 'which',
+            'dir ection': 'direction',
+            'exp ected': 'expected',
+            'britis h': 'british',
+            'sta ndard': 'standard',
+            'tel egraph': 'telegraph',
+            'tel egraphist': 'telegraphist',
+            'instru ment': 'instrument',
+            'equip ment': 'equipment',
+            'autho rity': 'authority',
+            'rece ived': 'received',
+            'trans mit': 'transmit',
+            'oper ator': 'operator',
+            'pass enger': 'passenger',
+            'offi cer': 'officer',
+            'cap tain': 'captain',
+            'sail ing': 'sailing',
+            'sena tor': 'senator',
+            'cotta m': 'cottam',
+            'life boat': 'lifeboat',
+            'wire less': 'wireless'
+        }
+        
+        if phrase in known_ocr_fixes:
+            # Preserve original case pattern
+            corrected = known_ocr_fixes[phrase]
+            if word1.isupper() and word2.isupper():
+                return corrected.upper()
+            elif word1.istitle() or word2.istitle():
+                return corrected.title()
+            else:
+                return corrected
+        
+        # Expanded list of legitimate phrases that should NOT be joined
+        legitimate_phrases = {
+            # Common prepositions and articles
+            'i am', 'to go', 'we had', 'he was', 'it was', 'you are', 'on a', 'in a', 'at a',
+            'of a', 'for a', 'by a', 'with a', 'from a', 'into a', 'onto a', 'over a',
+            'up to', 'as to', 'so to', 'go to', 'do you', 'if you', 'can you', 'did you',
+            'will you', 'would you', 'have you', 'had you', 'are you', 'were you',
+            
+            # Negations and confirmations  
+            'or no', 'yes or', 'is no', 'was no', 'had no', 'have no', 'do no', 'did no',
+            
+            # Phrasal verbs and common phrases
+            'get up', 'put up', 'set up', 'take up', 'pick up', 'come up', 'go up',
+            'get on', 'put on', 'go on', 'come on', 'hold on', 'turn on', 'take on',
+            'get in', 'put in', 'go in', 'come in', 'take in', 'let in',
+            'get out', 'put out', 'go out', 'come out', 'take out',
+            'get off', 'put off', 'go off', 'come off', 'take off',
+            
+            # Movement and direction
+            'back to', 'away to', 'went to', 'came to', 'next to', 'close to', 'up to',
+            'down to', 'over to', 'out to', 'in to', 'on to', 'off to', 'due to',
+            
+            # Quantities and types
+            'kind of', 'type of', 'sort of', 'out of', 'one of', 'all of', 'some of', 
+            'most of', 'part of', 'end of', 'top of', 'side of', 'time of', 'day of', 
+            'way of', 'lot of', 'bit of', 'piece of', 'number of', 'group of',
+            
+            # Questions and responses
+            'what is', 'where is', 'when is', 'who is', 'how is', 'why is',
+            'what are', 'where are', 'when are', 'who are', 'how are', 'why are',
+            'there is', 'there are', 'here is', 'here are',
+            
+            # Common verb phrases
+            'seem to', 'want to', 'need to', 'have to', 'got to', 'ought to',
+            'used to', 'able to', 'going to', 'trying to', 'about to',
+            
+            # Other common phrases
+            'and i', 'but i', 'so i', 'if i', 'when i', 'that i', 'as i',
+            'and he', 'but he', 'so he', 'if he', 'when he', 'that he', 'as he',
+            'and we', 'but we', 'so we', 'if we', 'when we', 'that we', 'as we'
+        }
+        
+        if phrase in legitimate_phrases:
+            return f"{word1} {word2}"
+        
+        # For very short second parts (1-2 chars), be more aggressive about joining
+        if len(word2) <= 2:
+            # Join if it creates common English word patterns
+            if joined.lower().endswith(('th', 'er', 'ed', 'ly', 'al', 'ic', 'ty', 'ry')):
+                return joined
+                
+            # Join single letters that are likely OCR breaks
+            if len(word2) == 1 and word2.lower() in 'aeiouynrst':
+                return joined
+        
+        # Default: don't join unless we're confident it's an OCR error
+        return f"{word1} {word2}"
     
     def batch_process_documents(self, pdf_paths: List[Path]) -> List[Dict[str, Any]]:
         """Process multiple PDF documents."""
