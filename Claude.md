@@ -1,261 +1,282 @@
 # Titanic Historical RAG - Project Documentation
 
-## 🎯 **Project Vision & Unique Value**
+## Project Vision & Unique Value
 
-### **Core Mission**
+### Core Mission
 Build the first RAG system designed specifically to **highlight contradictions** between historical witness testimonies rather than hide them. This is fundamentally different from standard RAG systems that try to find "the truth" - we embrace conflicting accounts as features, not bugs.
 
-**Killer Feature:** **Automatic contradiction detection and visual highlighting** between witness testimonies  
+**Killer Feature:** Automatic contradiction detection using **PyTorch + RoBERTa-MNLI transformer**
 **Tagline:** "Google for Titanic primary sources, but it shows you contradictions instead of hiding them"
 
 ---
 
-## 🚀 **CURRENT STATUS: FUNCTIONAL FOUNDATION, MISSING KILLER FEATURE**
+## Current Status (January 2026)
 
-### ✅ **What's Working (Foundation Complete)**
-- **30 Unique Witnesses** indexed from US Senate Inquiry
-- **381 Document Chunks** with proper witness attribution  
-- **FastAPI Web Application** running at http://localhost:8001
-- **Basic Search Engine** with witness filtering
-- **Vector Storage** with ChromaDB (381 chunks stored)
+### What's Working
+- **1237 Document Chunks** in Pinecone vector database
+- **FastAPI Web Application** running at http://localhost:8000
+- **Semantic Search** with OpenAI text-embedding-3-large (1024 dims)
+- **Basic UI** with witness filtering and search
 
-### 🔥 **CRITICAL MISSING: The Contradiction Highlighting System**
-**This is our unique differentiator and main value proposition - currently NOT implemented:**
-
-```
-❌ Automatic contradiction detection between witnesses
-❌ Side-by-side contradiction visual display
-❌ Contradiction confidence scoring  
-❌ "Show me conflicting accounts" functionality
-❌ Visual highlighting of contradictory statements
-```
-
-**Example of what we SHOULD be able to do:**
-```
-Query: "How many people were in Ismay's lifeboat?"
-Expected Result:
-┌─ Ismay: "About 45 people" ────────────┐  
-│                                       │
-│  CONTRADICTION DETECTED! ⚠️          │
-│                                       │  
-└─ Officer Lowe: "Only 12 people" ─────┘
-```
+### What's Being Built
+- **Contradiction Detection** using PyTorch + RoBERTa-MNLI (NLI)
+- **AWS Lambda Container** deployment to higuera.io
+- **British Inquiry** document parsing support
 
 ---
 
-## 🔧 **KNOWN ISSUES & IMPROVEMENT AREAS**
+## Implementation Plan
 
-### **Priority 1: KILLER FEATURE MISSING (CRITICAL)**
-- **Contradiction Detection**: Framework exists in `chunking.py` but not integrated into search
-- **Visual Highlighting**: No UI component for showing conflicting testimonies
-- **Comparison Engine**: Need to build witness account comparison system
-- **This is what makes us different from every other RAG system!**
+w### Phase 0: Fix Search Quality (CRITICAL)
 
-### **Priority 2: Document Quality Issues (High Impact)**  
-- **OCR Artifacts**: Weird capital letters ("C HARLES HERBERT LIGHTOLLER")
-- **Text Normalization**: Inconsistent formatting in extracted documents
-- **Witness Name Parsing**: Some names malformed due to OCR issues
+#### 0.1 REMOVE Keyword Matching Boost (5 min - HIGHEST PRIORITY)
+- **File**: `Services/semantic_search.py:133-137`
+- **Problem**: Keyword matching REVERSES semantic ranking from embeddings
+- **Example**: "lifeboats" returns chunks with "LIFE" + "BOAT" as separate words
+- **Solution**: DELETE the keyword boost code entirely
+- **Expected improvement**: 30-40% better relevance immediately
 
-### **Priority 3: Search Result Quality (Medium Impact)**
-- **Relevance**: Search results functional but not always optimal
-- **False Positives**: Some irrelevant results appearing
-- **Ranking**: Algorithm needs tuning for better result ordering
-
----
-
-## 🏗️ **TECHNICAL ARCHITECTURE**
-
-### **Current Pipeline (Missing Key Component)**
-```
-📄 PDF Documents → 🔍 Witness Extraction (OCR issues) → ✂️ Chunking → 
-🧠 Embeddings → 💾 Vector Storage → 🔍 Basic Search →
-❌ MISSING: Contradiction Detection & Highlighting
-```
-
-### **Services Status**
-- **document_ingestion.py**: 🔧 Working but OCR quality issues
-- **chunking.py**: ✅ Working, has contradiction framework (unused)
-- **embeddings.py**: ✅ Solid implementation
-- **vector_storage.py**: ✅ Reliable ChromaDB storage
-- **semantic_search.py**: 🔧 Basic search works, needs contradiction integration
-- **app.py**: ✅ FastAPI endpoints functional
-
-### **What We Have vs. What We Need**
-```
-✅ Document Processing Pipeline
-✅ Witness Attribution System  
-✅ Vector Search Capability
-✅ Web API Interface
-
-❌ Contradiction Detection Engine
-❌ Conflict Visualization UI
-❌ Multi-Witness Comparison
-❌ Contradiction Confidence Scoring
-```
-
----
-
-## 🎯 **DEVELOPMENT PRIORITIES - FOCUSED ON KILLER FEATURE**
-
-### **Phase 1: Implement Contradiction Detection (2-3 weeks) - CRITICAL**
-
-#### **Week 1: Core Contradiction Engine**
 ```python
-# Enhance Services/semantic_search.py:
-- Build contradiction detection algorithm
-- Implement witness account comparison 
-- Add contradiction confidence scoring
-- Create conflict identification system
+# DELETE THIS CODE (lines 133-137):
+query_words = set(query.text.lower().split())
+content_words = set(chunk.content.lower().split())
+keyword_overlap = len(query_words.intersection(content_words))
+if keyword_overlap > 0:
+    relevance += 0.1 * keyword_overlap  # THIS IS HARMFUL - REMOVE IT
 ```
 
-#### **Week 2: Contradiction API & Logic**
-```python
-# New API endpoints in app.py:
-- POST /search/contradictions - Find conflicting accounts
-- GET /witnesses/compare - Compare specific witnesses
-- POST /analyze/conflicts - Analyze contradiction patterns
-```
+#### 0.2 Fix CORS for Production
+- **File**: `app.py:18-24`
+- **Change**: Replace `allow_origins=["*"]` with configurable domain list
 
-#### **Week 3: Contradiction UI Components**
-```javascript
-// Frontend components needed:
-- Side-by-side witness comparison display
-- Contradiction highlighting visualization
-- Conflict confidence indicators
-- "Show Contradictions" toggle in search
-```
-
-### **Phase 2: Quality Improvements (2 weeks)**
-- Fix OCR artifacts in document processing
-- Improve search result relevance
-- Add more witness testimonies
-
-### **Phase 3: Advanced Features (2-3 weeks)**  
-- British Inquiry document integration
-- Timeline contradictions
-- Witness credibility analysis
+#### 0.3 Lower Similarity Threshold
+- **Files**: `app.py:55`, `Services/semantic_search.py:39`
+- **Change**: Default threshold from 0.7 → 0.55
 
 ---
 
-## 💡 **THE KILLER FEATURE - DETAILED IMPLEMENTATION PLAN**
+### Phase 1: Contradiction Detection (Core Feature)
 
-### **Contradiction Detection Algorithm**
+#### 1.1 Create ContradictionDetector Service
+- **New file**: `Services/contradiction_detector.py`
+- **Dependencies**: `transformers`, `torch` (CPU-only), `scipy`
+- **NLI Model**: `roberta-large-mnli` from Hugging Face
+
+**Core class**:
 ```python
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import torch
+
+@dataclass
+class Contradiction:
+    witness1: str
+    witness2: str
+    claim1: str
+    claim2: str
+    topic: str
+    confidence_score: float
+    detection_method: str  # "nli_transformer", "negation", "numerical"
+
 class ContradictionDetector:
-    def find_conflicts(self, query: str) -> List[Contradiction]:
-        """Find contradictory witness accounts for a query"""
-        # 1. Get all relevant witnesses for query
-        # 2. Extract key claims from each witness
-        # 3. Compare claims for contradictions
-        # 4. Score contradiction confidence
-        # 5. Return conflicting pairs
-        
-    def compare_witnesses(self, witness1: str, witness2: str, topic: str):
-        """Direct witness comparison on specific topic"""
-        
-    def score_contradiction(self, claim1: str, claim2: str) -> float:
-        """Calculate how contradictory two claims are"""
+    def __init__(self):
+        self.tokenizer = AutoTokenizer.from_pretrained("roberta-large-mnli")
+        self.model = AutoModelForSequenceClassification.from_pretrained("roberta-large-mnli")
+        self.model.eval()
+
+    def find_contradictions(self, query: str, results: List[SearchResult]) -> List[Contradiction]
+    def _check_nli_contradiction(self, claim1: str, claim2: str) -> Tuple[bool, float]
+    def _check_negation_patterns(self, claim1: str, claim2: str) -> Tuple[bool, float]
+    def _check_numerical_contradiction(self, claim1: str, claim2: str) -> Tuple[bool, float]
 ```
 
-### **Example User Experience**
+**Detection Strategy (Hybrid)**:
+1. Group results by witness
+2. For each pair of statements on same topic:
+   - **Step 1**: Check negation patterns ("not", "never" vs affirmative) → high confidence, free
+   - **Step 2**: Extract and compare numbers → high confidence, free
+   - **Step 3**: Run through RoBERTa-MNLI transformer → get contradiction probability
+3. Combine scores: `confidence = max(negation_score, number_score, nli_score)`
+
+#### 1.2 Integrate into Search Engine
+- **File**: `Services/semantic_search.py`
+- **Modify**: `get_related_contradictions()` (currently returns empty list)
+- Wire up to ContradictionDetector
+
+#### 1.3 Add API Endpoints
+- **File**: `app.py`
+- **New endpoints**:
+  - `POST /search/contradictions` - Search with contradiction analysis
+  - `GET /witnesses/compare?witness1=X&witness2=Y&topic=Z` - Direct comparison
+  - `GET /contradictions/topics` - List known contradiction topics
+
+#### 1.4 Frontend Contradiction UI
+- **File**: `static/index.html`
+- **Add**:
+  - "Show Contradictions" toggle in search form
+  - Contradiction card with side-by-side witness display
+  - Confidence badge (%, color-coded)
+  - "Compare Testimonies" button
+
+**UI Structure**:
 ```
-User Query: "How fast was the ship going?"
-
-Standard RAG Response: 
-"The ship was traveling at normal speed"
-
-Our Contradiction-Aware Response:
-┌─ Ismay: "We were never at full speed" ────────┐
-│                                               │  
-│  ⚠️  CONTRADICTION DETECTED (85% confidence) │
-│                                               │
-├─ Lightoller: "Ship was at nearly full speed" ┤
-│                                               │
-└─ Fleet: "I don't know the exact speed" ───────┘
-
-[Show Details] [Compare All Witnesses] [View Sources]
-```
-
----
-
-## 📊 **SUCCESS METRICS - REDEFINED**
-
-### **Current Metrics (Foundation)**
-```
-✅ 30 witnesses indexed
-✅ 381 chunks in vector database  
-✅ Web application operational
-✅ Basic search functionality working
-```
-
-### **Target Metrics (With Killer Feature)**
-```
-🎯 Contradiction detection for 10+ common topics
-🎯 95% accuracy in identifying conflicting accounts
-🎯 Sub-second response time for contradiction queries
-🎯 Visual contradiction display working
-🎯 User can easily compare witness accounts side-by-side
+┌─ Witness 1: Ismay ─────────────────┐
+│ "We were never at full speed"      │
+├────────── VS ──────────────────────┤
+│ CONTRADICTION: 85% confidence      │
+├─ Witness 2: Lightoller ────────────┤
+│ "Ship was at nearly full speed"    │
+└────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 **PROJECT ROADMAP - CONTRADICTION-FOCUSED**
+### Phase 2: Re-Index with Better Chunking (CRITICAL FOR SEARCH)
 
-### **September 2025: Foundation Complete**
-- ✅ Basic RAG pipeline operational
-- ✅ 30 witnesses indexed
-- ✅ Web application running
+#### 2.1 Fix Chunking Strategy
+- **File**: `Services/chunking.py`
+- **Root cause**: 800-char chunks bundle unrelated Q&A pairs together
+- **Fix**:
+  - Reduce chunk size from 800 → 400-500 characters
+  - Split on SINGLE Q&A pairs, not multiple
+  - Add topic keywords extraction to metadata
 
-### **October 2025: KILLER FEATURE IMPLEMENTATION** 
-- 🔥 **Build contradiction detection engine**
-- 🔥 **Implement visual conflict highlighting** 
-- 🔥 **Add witness comparison functionality**
-- 🔥 **Create contradiction confidence scoring**
+**New chunk metadata**:
+```python
+metadata = {
+    "witness_name": str,
+    "source_type": str,
+    "page_number": int,
+    "topic_keywords": list,      # ["lifeboat", "evacuation"]
+    "qa_question": str,          # The question being answered
+}
+```
 
-### **November 2025: Quality & Scale**
-- 🔧 Fix document processing issues
-- 📈 Add more witnesses and documents
-- 🎨 Polish contradiction visualization UI
-- 🚀 Prepare for production deployment
+#### 2.2 British Inquiry Parser
+- **File**: `Services/document_ingestion.py`
+- Add `_extract_witnesses_from_british_inquiry()` method
+- British Inquiry uses numbered questions and different examiner format
+
+#### 2.3 Use Index-Based Attribution
+- Leverage existing `Services/witness_index.py` (77 witnesses with page numbers)
+- Bypass regex parsing issues by mapping chunks to witnesses via page ranges
+
+#### 2.4 Re-Ingest All Data
+- Clear Pinecone index
+- Re-chunk with smaller size + topic metadata
+- Re-embed and upload
+- Test with: "lifeboats", "ship speed", "ice warnings"
 
 ---
 
-## 💎 **WHY THIS MATTERS - THE UNIQUE VALUE PROPOSITION**
+### Phase 3: Deployment to higuera.io (AWS Lambda Container)
 
-### **Every Other RAG System:**
-- Tries to find "the single truth"
-- Hides conflicting information
-- Normalizes contradictory sources
-- Generic document search
+**Why Lambda Container**: Fits PyTorch (~2GB), pay-per-request (~$0-5/month), serverless.
+**Note**: Cold starts ~60-90s due to model loading. Fine for portfolio.
 
-### **Our System:**
-- **Embraces contradictions as features**
-- **Highlights conflicts between witnesses**  
-- **Shows multiple perspectives simultaneously**
-- **Designed specifically for historical research**
+#### 3.1 Create Dockerfile for Lambda
+```dockerfile
+FROM public.ecr.aws/lambda/python:3.12
 
-**This is what makes us special - we need to build it!**
+# Install PyTorch CPU-only (smaller)
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+# Download and cache the model at build time
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
+    AutoTokenizer.from_pretrained('roberta-large-mnli'); \
+    AutoModelForSequenceClassification.from_pretrained('roberta-large-mnli')"
+
+# Copy app code
+COPY . .
+
+CMD ["app.handler"]
+```
+
+#### 3.2 Add Mangum Adapter
+- **File**: `app.py`
+```python
+from mangum import Mangum
+handler = Mangum(app)
+```
+
+#### 3.3 Deploy Steps
+1. Install AWS SAM CLI: `brew install aws-sam-cli`
+2. Build container: `sam build`
+3. Deploy: `sam deploy --guided`
+4. Set up custom domain in API Gateway console
+5. Point titanic.higuera.io to API Gateway URL
 
 ---
 
-## 📞 **IMMEDIATE ACTION ITEMS**
+## Execution Order
 
-### **This Week:**
-1. **Prioritize contradiction detection implementation**
-2. Design contradiction visualization UI mockups
-3. Plan witness comparison algorithm architecture
-4. Start building contradiction detection engine
+| Step | Task | Effort |
+|------|------|--------|
+| 1 | Phase 0.1: Remove keyword boost (CRITICAL) | 5 min |
+| 2 | Phase 0.2-0.3: CORS + threshold fixes | 30 min |
+| 3 | Phase 2.1: Fix chunking strategy | 1 day |
+| 4 | Phase 2.2-2.3: British parser + index attribution | 1 day |
+| 5 | Phase 2.4: Re-ingest all data | 1 day |
+| 6 | Phase 1.1: ContradictionDetector with PyTorch | 1-2 days |
+| 7 | Phase 1.2-1.4: Integration + API + UI | 2 days |
+| 8 | Phase 3: Lambda container deploy | 1-2 days |
 
-### **This Month:**
-1. **Complete killer feature implementation**
-2. Fix document processing quality issues
-3. Add more witness testimonies
-4. Test contradiction accuracy
+**Note**: Search quality fixes FIRST - good search is prerequisite for contradiction detection.
 
-**The foundation is solid. Now we need to build what makes us unique!**
-Ok
 ---
 
-*Last Updated: September 2025*  
-*Status: 🔥 Ready to Build Killer Feature - Contradiction Detection*  
-*Priority: Contradiction Highlighting System - This Is What Makes Us Special!*
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `app.py` | Fix threshold, fix CORS, add contradiction endpoints, add Mangum handler |
+| `Services/semantic_search.py` | Fix threshold, integrate ContradictionDetector |
+| `Services/contradiction_detector.py` | NEW - RoBERTa-MNLI NLI + negation/numerical detection |
+| `static/index.html` | Add contradiction UI components |
+| `requirements.txt` | Add `transformers`, `torch`, `mangum` |
+| `Dockerfile` | NEW - Lambda container with PyTorch + model |
+| `template.yaml` | NEW - AWS SAM template for container Lambda |
+| `Services/document_ingestion.py` | Fix British Inquiry parsing (Phase 2) |
+
+## New Dependencies
+
+```
+transformers>=4.30.0   # Hugging Face transformers (RoBERTa-MNLI)
+torch                  # PyTorch (CPU-only via --index-url)
+scipy                  # Required by transformers
+mangum>=0.17.0         # FastAPI -> Lambda adapter
+```
+
+---
+
+## Resume Keywords
+
+- **PyTorch** - Deep learning framework
+- **Transformers / Hugging Face** - NLP model library
+- **RoBERTa-MNLI** - Pre-trained NLI model
+- **Natural Language Inference (NLI)** - Text entailment/contradiction classification
+- **AWS Lambda** - Serverless compute
+- **Containerized ML** - Docker + ML models
+- **RAG** - Retrieval-Augmented Generation
+- **Pinecone** - Vector database
+- **FastAPI** - Modern Python web framework
+
+---
+
+## Verification
+
+1. **Local search works**: `curl -X POST http://localhost:8000/search -d '{"query": "iceberg", "similarity_threshold": 0.5}'`
+2. **NLI model loads**: ContradictionDetector initializes RoBERTa-MNLI without errors
+3. **Contradictions detected**: Query "ship speed" returns contradictions with NLI classification
+4. **UI displays contradictions**: Side-by-side view with confidence score
+5. **Container builds**: `sam build` completes successfully
+6. **Production**: https://titanic.higuera.io loads and searches work
+
+---
+
+*Last Updated: January 2026*
+*Status: Implementing Contradiction Detection with PyTorch + RoBERTa-MNLI*
+*Deployment Target: AWS Lambda Container → titanic.higuera.io*
