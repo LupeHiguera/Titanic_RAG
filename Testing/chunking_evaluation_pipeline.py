@@ -1,5 +1,5 @@
 """
-Chunking Evaluation Pipeline for Titanic RAG System
+Evals Evaluation Pipeline for Titanic RAG System
 
 Creates a comprehensive testing framework to evaluate different chunking strategies
 using real Titanic testimony data, with focus on:
@@ -85,24 +85,22 @@ class ChunkingEvaluationPipeline:
         data_pdf_path = root_dir / "Text" / "Data.pdf"
         if data_pdf_path.exists():
             result = self.ingestion.extract_text_from_pdf(data_pdf_path)
-            witnesses = self.ingestion.identify_witness_names(result["text"])
             return {
-                'text': result["text"], 
-                'witnesses': witnesses,
+                'text': result["text"],
+                'witnesses': ['J. Bruce Ismay'],
                 'document_name': result["metadata"].document_name
             }
-        
+
         # Fallback to one page.pdf
         pdf_path = root_dir / "Text" / "one page.pdf"
         if pdf_path.exists():
             result = self.ingestion.extract_text_from_pdf(pdf_path)
-            witnesses = self.ingestion.identify_witness_names(result["text"])
             return {
                 'text': result["text"],
-                'witnesses': witnesses,
+                'witnesses': ['J. Bruce Ismay'],
                 'document_name': result["metadata"].document_name
             }
-        
+
         return {'text': '', 'witnesses': [], 'document_name': 'Unknown'}
     
     def _create_golden_queries(self) -> List[GoldenQuery]:
@@ -615,7 +613,7 @@ class ChunkingEvaluationPipeline:
         
         report_lines = []
         
-        report_lines.append(f"# Chunking Strategy Evaluation Report")
+        report_lines.append(f"# Evals Strategy Evaluation Report")
         report_lines.append(f"Strategy: {evaluation_result['strategy_name']}")
         report_lines.append(f"Total Chunks: {evaluation_result['total_chunks']}")
         report_lines.append(f"Average Chunk Size: {evaluation_result['avg_chunk_size']:.1f} characters")

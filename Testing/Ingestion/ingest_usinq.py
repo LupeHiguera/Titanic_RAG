@@ -22,7 +22,7 @@ from Services.embeddings import EmbeddingService
 from Services.vector_storage import ChromaVectorStore
 
 def main():
-    print("🚀 Starting USInq.pdf Ingestion with Improved Chunking Strategy (800/80)")
+    print("🚀 Starting USInq.pdf Ingestion with Improved Evals Strategy (800/80)")
     print("=" * 70)
     
     # Initialize services with improved chunking
@@ -40,7 +40,7 @@ def main():
         return
     
     print(f"📄 Processing: {usinq_path}")
-    print(f"📏 Chunking Strategy: {chunker.chunk_size} chars, {chunker.overlap_size} overlap")
+    print(f"📏 Evals Strategy: {chunker.chunk_size} chars, {chunker.overlap_size} overlap")
     
     # Step 1: Extract text from PDF
     print("\n🔍 Step 1: Extracting text from PDF...")
@@ -59,36 +59,54 @@ def main():
         print(f"❌ Error extracting PDF: {e}")
         return
     
-    # Step 2: Identify witnesses
-    print("\n👤 Step 2: Identifying witnesses...")
-    witnesses = ingestion.identify_witness_names(result["text"])
-    print(f"✅ Found {len(witnesses)} witnesses: {witnesses[:10]}{'...' if len(witnesses) > 10 else ''}")
-    
-    # Step 3: Create witness contexts (sample for testing)
-    print("\n📝 Step 3: Creating witness contexts...")
-    # For the full document, we'll create contexts by splitting the text into manageable sections
-    # This is a simplified approach - in production you'd want more sophisticated witness segmentation
-    
-    text_length = len(result["text"])
-    section_size = 50000  # 50k characters per section for processing
+    # Step 2: Attribute pages to witnesses using the index
+    print("\n👤 Step 2: Attributing pages to witnesses via index...")
+    from Services.witness_index import WitnessIndex
+    wi = WitnessIndex()
+    page_texts = ingestion.extract_pages_from_pdf(usinq_path)
+
     sections = []
-    
-    for i in range(0, text_length, section_size):
-        section_text = result["text"][i:i + section_size]
-        section_witness = witnesses[0] if witnesses else "Multiple Witnesses"
-        
-        section = {
-            'witness': section_witness,
-            'testimony': section_text,
-            'page_number': (i // section_size) + 1,
-            'document_name': result["metadata"].document_name
-        }
-        sections.append(section)
+    current_witness = None
+    current_pages_text = []
+    current_start_page = None
+
+    for page_num in sorted(page_texts.keys()):
+        witness = wi.get_witness_by_page_range(page_num)
+        if witness is None:
+            continue
+        if current_witness is None or witness.name != current_witness.name or witness.page == page_num:
+            if current_witness and current_pages_text:
+                combined = ingestion._clean_extracted_text("\n".join(current_pages_text))
+                if len(combined) > 100:
+                    sections.append({
+                        'witness': current_witness.name,
+                        'testimony': combined,
+                        'page_number': current_start_page,
+                        'document_name': result["metadata"].document_name
+                    })
+            current_witness = witness
+            current_pages_text = [page_texts[page_num]]
+            current_start_page = page_num
+        else:
+            current_pages_text.append(page_texts[page_num])
+
+    if current_witness and current_pages_text:
+        combined = ingestion._clean_extracted_text("\n".join(current_pages_text))
+        if len(combined) > 100:
+            sections.append({
+                'witness': current_witness.name,
+                'testimony': combined,
+                'page_number': current_start_page,
+                'document_name': result["metadata"].document_name
+            })
+
+    witnesses = list(set(s['witness'] for s in sections))
+    print(f"✅ Found {len(witnesses)} witnesses: {witnesses[:10]}{'...' if len(witnesses) > 10 else ''}")
     
     print(f"✅ Created {len(sections)} sections for processing")
     
     # Step 4: Chunk the testimony with improved strategy
-    print("\n✂️  Step 4: Chunking testimony with improved strategy...")
+    print("\n✂️  Step 4: Evals testimony with improved strategy...")
     start_time = time.time()
     
     all_chunks = []
@@ -107,7 +125,7 @@ def main():
             print(f"   🔄 Progress: {i+1}/{len(sections)} sections processed")
     
     chunk_time = time.time() - start_time
-    print(f"✅ Chunking complete!")
+    print(f"✅ Evals complete!")
     print(f"   📊 Total chunks: {len(all_chunks)}")
     print(f"   📏 Average chunk size: {sum(len(c.content) for c in all_chunks) / len(all_chunks):.0f} chars")
     print(f"   ⏱️  Time taken: {chunk_time:.2f} seconds")

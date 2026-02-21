@@ -39,15 +39,14 @@ class TestEmbeddingService:
             pytest.skip("PDF file not found")
         
         result = ingestion.extract_text_from_pdf(pdf_path)
-        witnesses = ingestion.identify_witness_names(result["text"])
-        
+
         witness_context = {
-            'witness': witnesses[0] if witnesses else 'Ismay',
+            'witness': 'J. Bruce Ismay',
             'testimony': result["text"],
             'page_number': 1,
             'document_name': result["metadata"].document_name
         }
-        
+
         chunks = chunker.chunk_witness_contexts([witness_context])
         return chunks[:2]  # Return first 2 chunks for testing
     
@@ -122,8 +121,8 @@ class TestEmbeddingService:
         results = embedding_service.embed_batch(real_chunks)
         
         assert len(results) == len(real_chunks)
-        assert results[0].chunk.witness_name == "Ismay"
-        assert results[1].chunk.witness_name == "Ismay"
+        assert results[0].chunk.witness_name == "J. Bruce Ismay"
+        assert results[1].chunk.witness_name == "J. Bruce Ismay"
     
     def test_embed_handles_empty_content(self, embedding_service):
         empty_chunk = WitnessChunk(
@@ -170,7 +169,7 @@ class TestEmbeddingService:
         
         assert result.chunk.metadata.document_name == "US Senate Inquiry - Titanic Disaster"
         assert result.chunk.metadata.page_number == 1
-        assert result.chunk.witness_name == "Ismay"
+        assert result.chunk.witness_name == "J. Bruce Ismay"
     
     def test_cosine_similarity_calculation(self, embedding_service):
         vec1 = np.array([1, 0, 0])
@@ -271,23 +270,22 @@ class TestEmbeddingService:
         
         # Full pipeline test
         result = ingestion.extract_text_from_pdf(pdf_path)
-        witnesses = ingestion.identify_witness_names(result["text"])
-        
+
         witness_context = {
-            'witness': witnesses[0] if witnesses else 'Ismay',
+            'witness': 'J. Bruce Ismay',
             'testimony': result["text"][:500],  # Use first 500 chars
             'page_number': 1,
             'document_name': result["metadata"].document_name
         }
-        
+
         chunks = chunker.chunk_witness_contexts([witness_context])
-        
+
         # Verify chunks are created properly for embedding
         assert len(chunks) > 0
         for chunk in chunks:
             assert isinstance(chunk, WitnessChunk)
             assert len(chunk.content) > 0
-            assert chunk.witness_name == "Ismay"
+            assert chunk.witness_name == "J. Bruce Ismay"
             assert "ismay" in chunk.content.lower() or "senator" in chunk.content.lower()
             
             # Test that chunks have the right structure for embedding

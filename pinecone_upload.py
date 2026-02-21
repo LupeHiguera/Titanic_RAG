@@ -34,6 +34,7 @@ from Services.chunking import IntelligentChunker
 from Services.embeddings import EmbeddingService
 from Services.vector_storage import ChromaVectorStore, PineconeVectorStore
 from Services.semantic_search import SemanticSearchEngine
+from Services.witness_index import WitnessIndex
 
 
 class PineconeManager:
@@ -43,13 +44,14 @@ class PineconeManager:
         """Initialize services with new embedding model."""
         self.doc_ingestion = DocumentIngestion()
         self.chunker = IntelligentChunker()
+        self.witness_index = WitnessIndex()
         # Use text-embedding-3-large with 1024 dimensions (free tier compatible)
         self.embedding_service = EmbeddingService(model="text-embedding-3-large", dimensions=1024)
-        
+
         # Initialize vector stores
         self.chroma_store = ChromaVectorStore()
         self.pinecone_store = PineconeVectorStore()
-        
+
         print("🚀 Pinecone Manager initialized with text-embedding-3-large (1024d) model")
     
     def test_pinecone_connection(self):
@@ -74,29 +76,91 @@ class PineconeManager:
             return False
     
     def full_ingestion_and_upload(self, pdf_path: str = "Text/USInq.pdf"):
-        """Process full document and upload to Pinecone with progress tracking."""
+        """Process full document and upload to Pinecone with progress tracking.
+
+        Uses the witness index for page-based witness attribution instead of
+        regex-based extraction.
+        """
         print("=== FULL DOCUMENT INGESTION & PINECONE UPLOAD ===")
-        
+
         try:
-            # Step 1: Extract text from PDF
+            # Step 1: Extract per-page text from PDF
             print(f"🔄 Step 1: Extracting text from {pdf_path}...")
-            from pathlib import Path
             pdf_path_obj = Path(pdf_path)
-            doc_result = self.doc_ingestion.extract_text_from_pdf(pdf_path_obj)
-            extracted_text = doc_result["text"]
-            metadata = doc_result["metadata"]
-            
-            print(f"✅ Extracted {len(extracted_text):,} characters")
-            print(f"   Document: {metadata.document_name}")
-            
-            # Step 2: Chunk the document
-            print("🔄 Step 2: Intelligent chunking...")
-            chunks = self.chunker.chunk_document_by_witness(
-                text=extracted_text,
-                document_metadata=metadata
-            )
+            page_texts = self.doc_ingestion.extract_pages_from_pdf(pdf_path_obj)
+            total_pages = len(page_texts)
+            print(f"   Found {total_pages} pages")
+
+            # Step 2: Attribute pages to witnesses using the index
+            print("🔄 Step 2: Attributing pages to witnesses via index...")
+            witness_contexts = []
+            current_witness = None
+            current_pages_text = []
+            current_start_page = None
+
+            for page_num in sorted(page_texts.keys()):
+                witness = self.witness_index.get_witness_by_page_range(page_num)
+                if witness is None:
+                    continue
+
+                if current_witness is None or witness.name != current_witness.name or witness.page == page_num:
+                    # If witness changed (or this is a new testimony section for same witness),
+                    # flush the accumulated text
+                    if witness.page == page_num and current_witness is not None:
+                        # New testimony section — flush previous
+                        if current_pages_text:
+                            combined = "\n".join(current_pages_text)
+                            cleaned = self.doc_ingestion._clean_extracted_text(combined)
+                            if len(cleaned) > 100:
+                                witness_contexts.append({
+                                    'witness': current_witness.name,
+                                    'testimony': cleaned,
+                                    'page_number': current_start_page,
+                                    'document_name': 'US Senate Inquiry - Titanic Disaster',
+                                })
+                        current_witness = witness
+                        current_pages_text = [page_texts[page_num]]
+                        current_start_page = page_num
+                    elif current_witness is None or witness.name != current_witness.name:
+                        # Different witness — flush previous
+                        if current_witness and current_pages_text:
+                            combined = "\n".join(current_pages_text)
+                            cleaned = self.doc_ingestion._clean_extracted_text(combined)
+                            if len(cleaned) > 100:
+                                witness_contexts.append({
+                                    'witness': current_witness.name,
+                                    'testimony': cleaned,
+                                    'page_number': current_start_page,
+                                    'document_name': 'US Senate Inquiry - Titanic Disaster',
+                                })
+                        current_witness = witness
+                        current_pages_text = [page_texts[page_num]]
+                        current_start_page = page_num
+                    else:
+                        current_pages_text.append(page_texts[page_num])
+                else:
+                    # Same witness, accumulate
+                    current_pages_text.append(page_texts[page_num])
+
+            # Flush last witness
+            if current_witness and current_pages_text:
+                combined = "\n".join(current_pages_text)
+                cleaned = self.doc_ingestion._clean_extracted_text(combined)
+                if len(cleaned) > 100:
+                    witness_contexts.append({
+                        'witness': current_witness.name,
+                        'testimony': cleaned,
+                        'page_number': current_start_page,
+                        'document_name': 'US Senate Inquiry - Titanic Disaster',
+                    })
+
+            print(f"✅ Built {len(witness_contexts)} witness testimony sections")
+
+            # Step 3: Chunk the witness contexts
+            print("🔄 Step 3: Intelligent chunking...")
+            chunks = self.chunker.chunk_witness_contexts(witness_contexts)
             print(f"✅ Created {len(chunks)} chunks")
-            
+
             # Show witness breakdown
             witnesses = {}
             for chunk in chunks:
@@ -105,40 +169,40 @@ class PineconeManager:
             print(f"🎭 Found {len(witnesses)} witnesses:")
             for witness, count in sorted(witnesses.items()):
                 print(f"   {witness}: {count} chunks")
-            
-            # Step 3: Generate embeddings with progress tracking
-            print("🔄 Step 3: Generating embeddings with text-embedding-3-large...")
+
+            # Step 4: Generate embeddings with progress tracking
+            print("🔄 Step 4: Generating embeddings with text-embedding-3-large...")
             embedded_chunks = []
-            batch_size = 50  # Process in smaller batches for better progress tracking
-            
+            batch_size = 50
+
             for i in range(0, len(chunks), batch_size):
                 batch = chunks[i:i + batch_size]
                 batch_embedded = self.embedding_service.embed_batch(batch)
                 embedded_chunks.extend(batch_embedded)
-                
+
                 progress = min(i + batch_size, len(chunks))
                 print(f"   Progress: {progress}/{len(chunks)} chunks embedded ({progress/len(chunks)*100:.1f}%)")
-                
+
                 # Small delay to avoid rate limits
                 time.sleep(0.1)
-            
+
             print(f"✅ Generated {len(embedded_chunks)} embeddings")
             print(f"📏 Embedding dimension: {len(embedded_chunks[0].embedding)} (text-embedding-3-large @ 1024d)")
-            
-            # Step 4: Upload to Pinecone
-            print("🔄 Step 4: Uploading to Pinecone...")
+
+            # Step 5: Upload to Pinecone
+            print("🔄 Step 5: Uploading to Pinecone...")
             chunk_ids = self.pinecone_store.store_chunks(embedded_chunks)
             print(f"✅ Uploaded {len(chunk_ids)} chunks to Pinecone")
-            
-            # Step 5: Verify upload
-            print("🔄 Step 5: Verifying upload...")
+
+            # Step 6: Verify upload
+            print("🔄 Step 6: Verifying upload...")
             stats = self.pinecone_store.get_collection_stats()
             print(f"✅ Verification complete:")
             print(f"   Total vectors in Pinecone: {stats.get('total_chunks', 0)}")
             print(f"   Index name: {stats.get('index_name', 'unknown')}")
-            
+
             return True
-            
+
         except Exception as e:
             print(f"❌ Full ingestion failed: {e}")
             return False
