@@ -16,7 +16,7 @@ import sys
 root_dir = Path(__file__).parent.parent.parent
 sys.path.append(str(root_dir))
 
-from Testing.chunking_evaluation_pipeline import ChunkingEvaluationPipeline, create_chunking_strategies
+from Evals.chunking_evaluation_pipeline import ChunkingEvaluationPipeline
 from Services.chunking import IntelligentChunker
 
 
