@@ -32,27 +32,15 @@ class DocumentIngestion:
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
         try:
-            doc = fitz.open(str(pdf_path))
-            total_pages = len(doc)
-
-            # Extract text from all pages
-            text = ""
-            for page in doc:
-                text += page.get_text() + "\n"
-            doc.close()
-
-            text = self._clean_extracted_text(text)
-
-            # Create metadata
-            metadata = self._create_document_metadata(text, pdf_path, total_pages)
-
-            return {
-                "text": text,
-                "metadata": metadata
-            }
-
+            with fitz.open(str(pdf_path)) as doc:
+                total_pages = len(doc)
+                text = "".join(page.get_text() + "\n" for page in doc)
         except Exception as e:
             raise ValueError(f"Error reading PDF {pdf_path}: {e}")
+
+        text = self._clean_extracted_text(text)
+        metadata = self._create_document_metadata(text, pdf_path, total_pages)
+        return {"text": text, "metadata": metadata}
 
     def extract_pages_from_pdf(self, pdf_path: Path) -> Dict[int, str]:
         """Extract per-page text from a PDF file (1-indexed page numbers).
@@ -63,12 +51,8 @@ class DocumentIngestion:
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-        doc = fitz.open(str(pdf_path))
-        page_texts = {}
-        for i, page in enumerate(doc):
-            page_texts[i + 1] = page.get_text()
-        doc.close()
-        return page_texts
+        with fitz.open(str(pdf_path)) as doc:
+            return {i + 1: page.get_text() for i, page in enumerate(doc)}
 
     def _clean_extracted_text(self, text: str) -> str:
         """Clean extracted PDF text of artifacts and formatting issues."""

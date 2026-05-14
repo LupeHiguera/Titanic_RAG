@@ -144,23 +144,6 @@ class TestIntelligentChunker:
             assert chunk.metadata.total_chunks_for_witness >= 1
             assert chunk.metadata.chunk_index < chunk.metadata.total_chunks_for_witness
 
-    def test_group_chunks_by_topic_similarity(self, chunker, real_pdf_data):
-        chunks = chunker.chunk_witness_contexts(real_pdf_data)
-        grouped = chunker.group_chunks_by_topic(chunks)
-
-        assert isinstance(grouped, dict)
-
-    def test_extract_contradictory_statements(self, chunker, multiple_witnesses_simulation):
-        chunks = chunker.chunk_witness_contexts(multiple_witnesses_simulation)
-        contradictions = chunker.find_potential_contradictions(chunks)
-
-        assert isinstance(contradictions, list)
-        if len(contradictions) > 0:
-            for contradiction in contradictions:
-                assert "conflicting_chunks" in contradiction
-                assert "topic" in contradiction
-                assert "confidence_score" in contradiction
-
     def test_real_pdf_content_processing(self, chunker):
         """Test that we can actually process the real PDF content"""
         ingestion = DocumentIngestion()

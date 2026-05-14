@@ -68,7 +68,10 @@ class ContradictionDetector:
         model: str = MODEL_ID,
     ):
         self.cache = cache if cache is not None else make_cache()
-        self.client = client if client is not None else anthropic.Anthropic()
+        # 30s timeout — default is 10 minutes, which would hang /search/contradictions
+        # under a stuck call. Override here, not at client level, so injected clients
+        # keep their own settings.
+        self.client = client if client is not None else anthropic.Anthropic(timeout=30.0)
         self.model = model
 
     def detect(self, chunks: List[EmbeddedChunk], query: str) -> List[Contradiction]:

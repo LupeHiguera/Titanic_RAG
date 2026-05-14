@@ -15,7 +15,7 @@ class SearchQuery:
     text: str
     top_k: int = 5
     filters: Dict[str, Any] = field(default_factory=dict)
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = 0.5
 
 
 @dataclass
@@ -32,7 +32,7 @@ class SemanticSearchEngine:
     """Main search orchestrator for Titanic witness testimony semantic search."""
     
     def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore,
-                 default_top_k: int = 5, similarity_threshold: float = 0.7,
+                 default_top_k: int = 5, similarity_threshold: float = 0.5,
                  contradiction_detector: Optional[Any] = None):
         self.embedding_service = embedding_service
         self.vector_store = vector_store
@@ -124,66 +124,49 @@ class SemanticSearchEngine:
         
         return search_results
     
-    def _calculate_relevance_score(self, embedded_chunk: EmbeddedChunk, 
+    def _calculate_relevance_score(self, embedded_chunk: EmbeddedChunk,
                                   similarity_score: float, query: SearchQuery) -> float:
         """Calculate relevance score combining similarity and other factors."""
         relevance = similarity_score
-        
-        # Handle mock objects in tests
-        try:
-            # Boost relevance for keyword matches
-            query_words = set(query.text.lower().split())
-            content_words = set(embedded_chunk.chunk.content.lower().split())
-            keyword_overlap = len(query_words.intersection(content_words))
-            if keyword_overlap > 0:
-                relevance += 0.1 * keyword_overlap
-            
-            # Boost relevance for witness name matches
-            if query.filters.get('witness_name'):
-                if embedded_chunk.chunk.witness_name == query.filters['witness_name']:
-                    relevance += 0.05
-        except (AttributeError, TypeError):
-            # Handle mock objects or malformed data gracefully
-            pass
-        
-        # Cap relevance at 1.0
+
+        query_words = set(query.text.lower().split())
+        content_words = set(embedded_chunk.chunk.content.lower().split())
+        keyword_overlap = len(query_words.intersection(content_words))
+        if keyword_overlap > 0:
+            relevance += 0.1 * keyword_overlap
+
+        if query.filters.get('witness_name'):
+            if embedded_chunk.chunk.witness_name == query.filters['witness_name']:
+                relevance += 0.05
+
         return min(relevance, 1.0)
     
-    def _explain_relevance(self, query: SearchQuery, chunk: WitnessChunk, 
+    def _explain_relevance(self, query: SearchQuery, chunk: WitnessChunk,
                           similarity_score: float) -> str:
         """Generate explanation for why this result is relevant."""
         explanation = f"Similarity score: {similarity_score:.2f}. "
-        
-        try:
-            query_words = set(query.text.lower().split())
-            content_words = set(chunk.content.lower().split())
-            matching_words = query_words.intersection(content_words)
-            
-            if matching_words:
-                explanation += f"Key matching terms: {', '.join(sorted(matching_words))}. "
-            
-            explanation += f"Witness: {chunk.witness_name} from {chunk.metadata.source_type}."
-        except (AttributeError, TypeError):
-            # Handle mock objects gracefully
-            explanation += "Mock data for testing."
-        
+
+        query_words = set(query.text.lower().split())
+        content_words = set(chunk.content.lower().split())
+        matching_words = query_words.intersection(content_words)
+
+        if matching_words:
+            explanation += f"Key matching terms: {', '.join(sorted(matching_words))}. "
+
+        explanation += f"Witness: {chunk.witness_name} from {chunk.metadata.source_type}."
         return explanation
     
     def _highlight_terms(self, content: str, query_text: str) -> str:
         """Highlight query terms in the content."""
-        try:
-            query_words = query_text.lower().split()
-            highlighted = content
-            
-            for word in query_words:
-                if len(word) > 2:  # Only highlight meaningful words
-                    pattern = re.compile(re.escape(word), re.IGNORECASE)
-                    highlighted = pattern.sub(f"**{word.upper()}**", highlighted)
-            
-            return highlighted
-        except (AttributeError, TypeError):
-            # Handle mock objects or non-string content
-            return str(content)
+        query_words = query_text.lower().split()
+        highlighted = content
+
+        for word in query_words:
+            if len(word) > 2:  # only highlight meaningful words
+                pattern = re.compile(re.escape(word), re.IGNORECASE)
+                highlighted = pattern.sub(lambda m: f"**{m.group(0)}**", highlighted)
+
+        return highlighted
     
     def get_related_contradictions(self, query: SearchQuery,
                                    min_confidence: float = 0.6) -> List[Dict[str, Any]]:

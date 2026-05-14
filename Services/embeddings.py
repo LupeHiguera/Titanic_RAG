@@ -56,20 +56,36 @@ class EmbeddingService:
         return EmbeddedChunk(chunk=chunk, embedding=embedding)
     
     def embed_batch(self, chunks: List[WitnessChunk]) -> List[EmbeddedChunk]:
-        """Embed multiple chunks efficiently."""
+        """Embed multiple chunks via batched OpenAI calls.
+
+        Cached chunks are served from memory; uncached chunks are grouped
+        into 100-input batches and embedded in a single API call per batch.
+        Order is preserved.
+        """
         if not chunks:
             return []
-        
-        embedded_chunks = []
-        batches = self._split_into_batches(chunks, batch_size=100)
-        
-        for batch in batches:
-            # Process each chunk in the batch
-            for chunk in batch:
-                embedded_chunk = self.embed_chunk(chunk)
-                embedded_chunks.append(embedded_chunk)
-        
-        return embedded_chunks
+
+        results: List[Optional[EmbeddedChunk]] = [None] * len(chunks)
+        to_embed: List[Tuple[int, WitnessChunk]] = []
+
+        for i, chunk in enumerate(chunks):
+            if not chunk.content or chunk.content.strip() == "":
+                raise ValueError("Cannot embed empty content")
+            cached = self._get_from_cache(self._get_cache_key(chunk.content))
+            if cached is not None:
+                results[i] = EmbeddedChunk(chunk=chunk, embedding=cached)
+            else:
+                to_embed.append((i, chunk))
+
+        for batch_start in range(0, len(to_embed), 100):
+            batch = to_embed[batch_start:batch_start + 100]
+            texts = [chunk.content for _, chunk in batch]
+            embeddings = self._get_embeddings_batch_with_retry(texts)
+            for (orig_i, chunk), emb in zip(batch, embeddings):
+                self._store_in_cache(self._get_cache_key(chunk.content), emb)
+                results[orig_i] = EmbeddedChunk(chunk=chunk, embedding=emb)
+
+        return results  # all slots populated above
     
     def embed_text(self, text: str) -> np.ndarray:
         """Embed raw text (used by search engine)."""
@@ -87,29 +103,40 @@ class EmbeddingService:
         return embedding
     
     def _get_embedding_with_retry(self, text: str, max_retries: int = 3) -> np.ndarray:
-        """Get embedding with retry logic for rate limiting."""
+        """Get embedding for a single text with retry on rate limits."""
+        if self.provider != "openai":
+            raise NotImplementedError(f"Provider {self.provider} not implemented")
         for attempt in range(max_retries):
             try:
-                if self.provider == "openai":
-                    response = self.client.embeddings.create(
-                        input=text,
-                        model=self.model,
-                        dimensions=self.dimensions
-                    )
-                    embedding = np.array(response.data[0].embedding)
-                    return embedding
-                else:
-                    raise NotImplementedError(f"Provider {self.provider} not implemented")
-            
+                response = self.client.embeddings.create(
+                    input=text,
+                    model=self.model,
+                    dimensions=self.dimensions,
+                )
+                return np.array(response.data[0].embedding)
             except Exception as e:
                 if "rate limit" in str(e).lower() and attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) + 1  # Exponential backoff
-                    time.sleep(wait_time)
+                    time.sleep((2 ** attempt) + 1)
                     continue
-                else:
-                    raise e
-        
-        raise Exception(f"Failed to get embedding after {max_retries} attempts")
+                raise
+
+    def _get_embeddings_batch_with_retry(self, texts: List[str], max_retries: int = 3) -> List[np.ndarray]:
+        """Get embeddings for a batch of texts in a single API call, with retry."""
+        if self.provider != "openai":
+            raise NotImplementedError(f"Provider {self.provider} not implemented")
+        for attempt in range(max_retries):
+            try:
+                response = self.client.embeddings.create(
+                    input=texts,
+                    model=self.model,
+                    dimensions=self.dimensions,
+                )
+                return [np.array(d.embedding) for d in response.data]
+            except Exception as e:
+                if "rate limit" in str(e).lower() and attempt < max_retries - 1:
+                    time.sleep((2 ** attempt) + 1)
+                    continue
+                raise
     
     def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """Calculate cosine similarity between two vectors."""

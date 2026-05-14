@@ -14,6 +14,21 @@ from Services.vector_storage import VectorStore
 from Services.chunking import WitnessChunk, ChunkMetadata
 
 
+def _make_test_chunk(content: str = "test testimony", witness: str = "Test Witness") -> EmbeddedChunk:
+    """Build a minimal real EmbeddedChunk for tests that need cheap synthetic data."""
+    return EmbeddedChunk(
+        chunk=WitnessChunk(
+            content=content,
+            witness_name=witness,
+            metadata=ChunkMetadata(
+                document_name="test", source_type="us_inquiry", page_number=1,
+                credibility_score=0.0, chunk_index=0, total_chunks_for_witness=1,
+            ),
+        ),
+        embedding=np.zeros(1024),
+    )
+
+
 class TestSemanticSearchEngine:
     
     @pytest.fixture
@@ -210,7 +225,10 @@ class TestSemanticSearchEngine:
         chunk = WitnessChunk(
             content="Q: And your occupation? A: Ship owner. Q: Are you an officer of the White Star Line? A: I am. Q: In what capacity? A: Managing Director.",
             witness_name="Joseph Bruce Ismay",
-            metadata=Mock()
+            metadata=ChunkMetadata(
+                document_name="one page.pdf", source_type="us_inquiry", page_number=1,
+                credibility_score=0.0, chunk_index=0, total_chunks_for_witness=1,
+            ),
         )
         
         explanation = search_engine._explain_relevance(query, chunk, 0.9)
@@ -236,8 +254,8 @@ class TestSemanticSearchEngine:
     
     def test_search_applies_similarity_threshold(self, search_engine, mock_vector_store):
         low_similarity_results = [
-            (Mock(), 0.3),  # Below threshold
-            (Mock(), 0.8),  # Above threshold
+            (_make_test_chunk("below threshold content"), 0.3),
+            (_make_test_chunk("above threshold content"), 0.8),
         ]
         mock_vector_store.query.return_value = low_similarity_results
         
@@ -284,7 +302,7 @@ class TestSemanticSearchEngine:
     
     def test_search_performance_with_large_result_set(self, search_engine, mock_vector_store):
         # Mock should return only top_k results (10) when called with top_k=10
-        mock_result_set = [(Mock(), 0.8) for _ in range(10)]
+        mock_result_set = [(_make_test_chunk(f"chunk content {i}"), 0.8) for i in range(10)]
         mock_vector_store.query.return_value = mock_result_set
         
         query = SearchQuery(text="test query", top_k=10)

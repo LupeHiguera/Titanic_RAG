@@ -1,3 +1,6 @@
+import logging
+import os
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,16 +11,23 @@ from dotenv import load_dotenv
 from Services.semantic_search import SemanticSearchEngine, SearchQuery
 from Services.embeddings import EmbeddingService
 from Services.vector_storage import PineconeVectorStore
+from Services.witness_index import WitnessIndex
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Log exceptions server-side; never include raw error strings in HTTP responses.
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Titanic Historical RAG", description="Search Titanic witness testimonies")
 
-# Enable CORS for frontend
+# CORS: comma-separated list in ALLOWED_ORIGINS, defaults to localhost only.
+# Set ALLOWED_ORIGINS=* in dev if you really want wildcard.
+_allowed = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
+allow_origins = ["*"] if _allowed.strip() == "*" else [o.strip() for o in _allowed.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,6 +37,7 @@ app.add_middleware(
 embedding_service = None
 vector_store = PineconeVectorStore()
 search_engine = None
+witness_index = WitnessIndex()
 
 
 def get_search_engine():
@@ -45,14 +56,15 @@ def get_search_engine():
                 else:
                     raise HTTPException(status_code=500,
                                         detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
-            raise HTTPException(status_code=500, detail=f"Failed to initialize search engine: {str(e)}")
+            logger.exception("Failed to initialize search engine")
+            raise HTTPException(status_code=500, detail="Failed to initialize search engine")
     return search_engine
 
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = 0.5
     witness_name: Optional[str] = None
     source_type: Optional[str] = None
 
@@ -89,8 +101,9 @@ async def health_check():
             "vector_store": "operational",
             "total_documents": stats.get("total_chunks", 0)
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"System unhealthy: {str(e)}")
+    except Exception:
+        logger.exception("/health failed")
+        raise HTTPException(status_code=500, detail="System unhealthy")
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -137,8 +150,9 @@ async def search_documents(request: SearchRequest):
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+    except Exception:
+        logger.exception("/search failed")
+        raise HTTPException(status_code=500, detail="Search failed")
 
 
 @app.post("/search/contradictions", response_model=ContradictionSearchResponse)
@@ -171,8 +185,9 @@ async def search_contradictions(request: ContradictionSearchRequest):
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Contradiction search failed: {str(e)}")
+    except Exception:
+        logger.exception("/search/contradictions failed")
+        raise HTTPException(status_code=500, detail="Contradiction search failed")
 
 
 @app.get("/documents")
@@ -191,45 +206,33 @@ async def get_documents():
                 "model": "text-embedding-3-large"
             }
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get documents: {str(e)}")
+    except Exception:
+        logger.exception("/documents failed")
+        raise HTTPException(status_code=500, detail="Failed to get documents")
 
 
 @app.get("/witnesses")
 async def get_witnesses(search: Optional[str] = None):
-    """Get list of witnesses, optionally filtered by search term."""
-    try:
-        # For Pinecone, we'll return a static list of known witnesses from the uploaded data
-        # This is a limitation of Pinecone's API - it doesn't support metadata enumeration
-        # In production, this could be cached or stored separately
-        known_witnesses = [
-            "CHARLES HERBERT LIGHTOLLER", "JOSEPH GROVES BOXHALL", "EDWARD WHEELTON",
-            "ALBERT HAINES", "GEORGE THOMAS ROW", "JOSEPH SCARROTT", "FRANK OSMAN",
-            "GEORGE MOORE", "ARTHUR JOHN BRIGHT", "FREDERICK FLEET",
-            "REGINALD ROBINSON LEE", "GEORGE ALFRED ROWE", "SAMUEL HEMMING",
-            "WALTER JOHN PERKIS", "HERBERT JOHN PITMAN", "HAROLD GODFREY LOWE",
-            "ARCHIE JEWELL", "THOMAS PATRICK DILLON", "WILLIAM THOMAS STEAD",
-            "HAROLD SYDNEY BRIDE", "JACK PHILLIPS", "THOMAS ANDREWS", 
-            "BRUCE ISMAY", "WALLACE HENRY HARTLEY", "JOHN JACOB ASTOR",
-            "BENJAMIN GUGGENHEIM", "ISIDOR STRAUS", "IDA STRAUS", "MARGARET BROWN",
-            "DOROTHY GIBSON", "ARCHIBALD GRACIE"
-        ]
+    """Get the canonical list of witnesses, optionally filtered by search term.
 
-        # Filter by search term if provided
+    Sourced from WitnessIndex (the source of truth for witness attribution),
+    not from the vector store — which doesn't enumerate metadata efficiently.
+    """
+    try:
+        names = sorted({w.name for w in witness_index.get_unique_witnesses()})
+
         if search and search.strip():
-            search_lower = search.strip().lower()
-            filtered_witnesses = [w for w in known_witnesses if search_lower in w.lower()]
-        else:
-            filtered_witnesses = known_witnesses
+            q = search.strip().lower()
+            names = [n for n in names if q in n.lower()]
 
         return {
-            "witnesses": sorted(filtered_witnesses),
-            "total_count": len(filtered_witnesses),
-            "note": "Witness list from Pinecone vector database - subset of known witnesses"
+            "witnesses": names,
+            "total_count": len(names),
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get witnesses: {str(e)}")
+    except Exception:
+        logger.exception("/witnesses failed")
+        raise HTTPException(status_code=500, detail="Failed to get witnesses")
 
 
 # Mount static files

@@ -535,6 +535,14 @@
             overflow-y: auto;
         }
 
+        .result-content mark {
+            background: var(--accent-glow);
+            color: var(--text-primary);
+            padding: 1px 3px;
+            border-radius: 3px;
+            font-weight: 500;
+        }
+
         .result-explanation {
             font-size: 0.85rem;
             color: var(--text-muted);
@@ -1272,7 +1280,7 @@
                             <span class="score-badge score-relevance">${r.relevance_score}</span>
                         </div>
                     </div>
-                    <div class="result-content">${escapeHtml(r.content)}</div>
+                    <div class="result-content">${formatHighlights(r.content)}</div>
                     ${r.explanation ? `<div class="result-explanation">${escapeHtml(r.explanation)}</div>` : ''}
                 </div>
             `).join('');
@@ -1328,6 +1336,10 @@
             const div = document.createElement('div');
             div.textContent = str;
             return div.innerHTML;
+        }
+
+        function formatHighlights(str) {
+            return escapeHtml(str).replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
         }
     </script>
 </body>

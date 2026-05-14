@@ -44,8 +44,8 @@ class IntelligentChunker:
                 page_num = getattr(context, 'page_number', 1)
                 doc_name = getattr(context, 'document_name', 'Unknown')
 
-            # Determine credibility score based on witness role
-            credibility_score = self._calculate_credibility_score(witness_name)
+            # Credibility scoring is a legacy field — kept on metadata for back-compat
+            credibility_score = 0.0
 
             # Split testimony into chunks while preserving Q&A structure
             text_chunks = self._split_text_preserving_context(testimony)
@@ -197,20 +197,6 @@ class IntelligentChunker:
 
         return overlapped_chunks
 
-    def _calculate_credibility_score(self, witness_name: str) -> float:
-        """Calculate credibility score based on witness role."""
-        name_lower = witness_name.lower()
-
-        # Officers and ship personnel have highest credibility
-        if any(title in name_lower for title in ['officer', 'captain', 'commander']):
-            return 0.9
-        elif any(title in name_lower for title in ['crew', 'steward', 'engineer']):
-            return 0.8
-        elif any(title in name_lower for title in ['mr.', 'mrs.', 'miss']):
-            return 0.7
-        else:
-            return 0.6
-
     def _determine_source_type(self, document_name: str) -> str:
         """Determine inquiry type from document name."""
         doc_lower = document_name.lower()
@@ -221,79 +207,3 @@ class IntelligentChunker:
         else:
             return 'other'
 
-    def group_chunks_by_topic(self, chunks: List[WitnessChunk]) -> Dict[str, List[WitnessChunk]]:
-        """Group chunks by topic keywords."""
-        topics = {
-            'lifeboats': [],
-            'officers': [],
-            'passengers': [],
-            'crew': [],
-            'collision': [],
-            'evacuation': []
-        }
-
-        for chunk in chunks:
-            content_lower = chunk.content.lower()
-
-            # Simple keyword matching for topic classification
-            if any(word in content_lower for word in ['lifeboat', 'boat', 'davit']):
-                topics['lifeboats'].append(chunk)
-            if any(word in content_lower for word in ['officer', 'captain', 'commander']):
-                topics['officers'].append(chunk)
-            if any(word in content_lower for word in ['passenger', 'traveler']):
-                topics['passengers'].append(chunk)
-            if any(word in content_lower for word in ['crew', 'steward', 'engineer']):
-                topics['crew'].append(chunk)
-            if any(word in content_lower for word in ['collision', 'iceberg', 'impact']):
-                topics['collision'].append(chunk)
-            if any(word in content_lower for word in ['evacuation', 'abandon', 'emergency']):
-                topics['evacuation'].append(chunk)
-
-        return topics
-
-    def find_potential_contradictions(self, chunks: List[WitnessChunk]) -> List[Dict[str, Any]]:
-        """Find potential contradictions between witness statements."""
-        contradictions = []
-        topics = self.group_chunks_by_topic(chunks)
-
-        for topic, topic_chunks in topics.items():
-            if len(topic_chunks) >= 2:
-                # Group chunks by different witnesses
-                witnesses_statements = {}
-                for chunk in topic_chunks:
-                    witness = chunk.witness_name
-                    if witness not in witnesses_statements:
-                        witnesses_statements[witness] = []
-                    witnesses_statements[witness].append(chunk)
-
-                # If we have statements from multiple witnesses on same topic, it's a potential contradiction
-                if len(witnesses_statements) >= 2:
-                    witness_names = list(witnesses_statements.keys())
-                    contradiction = {
-                        'topic': topic,
-                        'conflicting_chunks': [
-                            witnesses_statements[witness_names[0]],
-                            witnesses_statements[witness_names[1]]
-                        ],
-                        'confidence_score': self._calculate_contradiction_confidence(
-                            witnesses_statements[witness_names[0]],
-                            witnesses_statements[witness_names[1]]
-                        )
-                    }
-                    contradictions.append(contradiction)
-
-        return contradictions
-
-    def _calculate_contradiction_confidence(self, chunks1: List[WitnessChunk], chunks2: List[WitnessChunk]) -> float:
-        """Calculate confidence score for contradiction detection."""
-        # Simple heuristic based on credibility scores and topic overlap
-        avg_cred1 = sum(c.metadata.credibility_score for c in chunks1) / len(chunks1)
-        avg_cred2 = sum(c.metadata.credibility_score for c in chunks2) / len(chunks2)
-
-        # Higher confidence if both witnesses have high credibility
-        credibility_factor = (avg_cred1 + avg_cred2) / 2
-
-        # Base confidence for having multiple witnesses on same topic
-        base_confidence = 0.6
-
-        return min(0.9, base_confidence + (credibility_factor * 0.3))

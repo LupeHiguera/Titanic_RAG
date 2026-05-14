@@ -1,282 +1,143 @@
-# Titanic Historical RAG - Project Documentation
+# Titanic Historical RAG
 
-## Project Vision & Unique Value
+Engineering documentation for the codebase. For the public-facing intro, see [README.md](README.md). For the original implementation plan that drove the killer feature, see [CONTRADICTION_PLAN.md](CONTRADICTION_PLAN.md).
 
-### Core Mission
-Build the first RAG system designed specifically to **highlight contradictions** between historical witness testimonies rather than hide them. This is fundamentally different from standard RAG systems that try to find "the truth" - we embrace conflicting accounts as features, not bugs.
+## What this is
 
-**Killer Feature:** Automatic contradiction detection using **PyTorch + RoBERTa-MNLI transformer**
-**Tagline:** "Google for Titanic primary sources, but it shows you contradictions instead of hiding them"
+A RAG system over Titanic inquiry transcripts that **surfaces contradictions between witnesses** rather than collapsing them into a single answer. Standard RAG would hand you "the truth" — this one shows you that Ismay said his lifeboat had 45 people while Officer Lowe said it had 12, side-by-side, with an explanation of why those statements conflict.
 
----
+## Current state
 
-## Current Status (January 2026)
+- US Senate Inquiry (1,173 pages, `Text/USInq.pdf`) fully ingested into Pinecone — ~16K chunks across 68 real witnesses
+- British Inquiry: 7-page format sample only; full ~2,200-page transcript not yet sourced
+- Contradiction detection wired end-to-end via Claude Haiku 4.5
+- FastAPI app on port 8000 with `/search` and `/search/contradictions` endpoints
+- Single-page UI with a "Show contradictions only" toggle and side-by-side card layout
 
-### What's Working
-- **1237 Document Chunks** in Pinecone vector database
-- **FastAPI Web Application** running at http://localhost:8000
-- **Semantic Search** with OpenAI text-embedding-3-large (1024 dims)
-- **Basic UI** with witness filtering and search
-
-### What's Being Built
-- **Contradiction Detection** using PyTorch + RoBERTa-MNLI (NLI)
-- **AWS Lambda Container** deployment to higuera.io
-- **British Inquiry** document parsing support
-
----
-
-## Implementation Plan
-
-w### Phase 0: Fix Search Quality (CRITICAL)
-
-#### 0.1 REMOVE Keyword Matching Boost (5 min - HIGHEST PRIORITY)
-- **File**: `Services/semantic_search.py:133-137`
-- **Problem**: Keyword matching REVERSES semantic ranking from embeddings
-- **Example**: "lifeboats" returns chunks with "LIFE" + "BOAT" as separate words
-- **Solution**: DELETE the keyword boost code entirely
-- **Expected improvement**: 30-40% better relevance immediately
-
-```python
-# DELETE THIS CODE (lines 133-137):
-query_words = set(query.text.lower().split())
-content_words = set(chunk.content.lower().split())
-keyword_overlap = len(query_words.intersection(content_words))
-if keyword_overlap > 0:
-    relevance += 0.1 * keyword_overlap  # THIS IS HARMFUL - REMOVE IT
-```
-
-#### 0.2 Fix CORS for Production
-- **File**: `app.py:18-24`
-- **Change**: Replace `allow_origins=["*"]` with configurable domain list
-
-#### 0.3 Lower Similarity Threshold
-- **Files**: `app.py:55`, `Services/semantic_search.py:39`
-- **Change**: Default threshold from 0.7 → 0.55
-
----
-
-### Phase 1: Contradiction Detection (Core Feature)
-
-#### 1.1 Create ContradictionDetector Service
-- **New file**: `Services/contradiction_detector.py`
-- **Dependencies**: `transformers`, `torch` (CPU-only), `scipy`
-- **NLI Model**: `roberta-large-mnli` from Hugging Face
-
-**Core class**:
-```python
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import torch
-
-@dataclass
-class Contradiction:
-    witness1: str
-    witness2: str
-    claim1: str
-    claim2: str
-    topic: str
-    confidence_score: float
-    detection_method: str  # "nli_transformer", "negation", "numerical"
-
-class ContradictionDetector:
-    def __init__(self):
-        self.tokenizer = AutoTokenizer.from_pretrained("roberta-large-mnli")
-        self.model = AutoModelForSequenceClassification.from_pretrained("roberta-large-mnli")
-        self.model.eval()
-
-    def find_contradictions(self, query: str, results: List[SearchResult]) -> List[Contradiction]
-    def _check_nli_contradiction(self, claim1: str, claim2: str) -> Tuple[bool, float]
-    def _check_negation_patterns(self, claim1: str, claim2: str) -> Tuple[bool, float]
-    def _check_numerical_contradiction(self, claim1: str, claim2: str) -> Tuple[bool, float]
-```
-
-**Detection Strategy (Hybrid)**:
-1. Group results by witness
-2. For each pair of statements on same topic:
-   - **Step 1**: Check negation patterns ("not", "never" vs affirmative) → high confidence, free
-   - **Step 2**: Extract and compare numbers → high confidence, free
-   - **Step 3**: Run through RoBERTa-MNLI transformer → get contradiction probability
-3. Combine scores: `confidence = max(negation_score, number_score, nli_score)`
-
-#### 1.2 Integrate into Search Engine
-- **File**: `Services/semantic_search.py`
-- **Modify**: `get_related_contradictions()` (currently returns empty list)
-- Wire up to ContradictionDetector
-
-#### 1.3 Add API Endpoints
-- **File**: `app.py`
-- **New endpoints**:
-  - `POST /search/contradictions` - Search with contradiction analysis
-  - `GET /witnesses/compare?witness1=X&witness2=Y&topic=Z` - Direct comparison
-  - `GET /contradictions/topics` - List known contradiction topics
-
-#### 1.4 Frontend Contradiction UI
-- **File**: `static/index.html`
-- **Add**:
-  - "Show Contradictions" toggle in search form
-  - Contradiction card with side-by-side witness display
-  - Confidence badge (%, color-coded)
-  - "Compare Testimonies" button
-
-**UI Structure**:
-```
-┌─ Witness 1: Ismay ─────────────────┐
-│ "We were never at full speed"      │
-├────────── VS ──────────────────────┤
-│ CONTRADICTION: 85% confidence      │
-├─ Witness 2: Lightoller ────────────┤
-│ "Ship was at nearly full speed"    │
-└────────────────────────────────────┘
-```
-
----
-
-### Phase 2: Re-Index with Better Chunking (CRITICAL FOR SEARCH)
-
-#### 2.1 Fix Chunking Strategy
-- **File**: `Services/chunking.py`
-- **Root cause**: 800-char chunks bundle unrelated Q&A pairs together
-- **Fix**:
-  - Reduce chunk size from 800 → 400-500 characters
-  - Split on SINGLE Q&A pairs, not multiple
-  - Add topic keywords extraction to metadata
-
-**New chunk metadata**:
-```python
-metadata = {
-    "witness_name": str,
-    "source_type": str,
-    "page_number": int,
-    "topic_keywords": list,      # ["lifeboat", "evacuation"]
-    "qa_question": str,          # The question being answered
-}
-```
-
-#### 2.2 British Inquiry Parser
-- **File**: `Services/document_ingestion.py`
-- Add `_extract_witnesses_from_british_inquiry()` method
-- British Inquiry uses numbered questions and different examiner format
-
-#### 2.3 Use Index-Based Attribution
-- Leverage existing `Services/witness_index.py` (77 witnesses with page numbers)
-- Bypass regex parsing issues by mapping chunks to witnesses via page ranges
-
-#### 2.4 Re-Ingest All Data
-- Clear Pinecone index
-- Re-chunk with smaller size + topic metadata
-- Re-embed and upload
-- Test with: "lifeboats", "ship speed", "ice warnings"
-
----
-
-### Phase 3: Deployment to higuera.io (AWS Lambda Container)
-
-**Why Lambda Container**: Fits PyTorch (~2GB), pay-per-request (~$0-5/month), serverless.
-**Note**: Cold starts ~60-90s due to model loading. Fine for portfolio.
-
-#### 3.1 Create Dockerfile for Lambda
-```dockerfile
-FROM public.ecr.aws/lambda/python:3.12
-
-# Install PyTorch CPU-only (smaller)
-RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install dependencies
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-# Download and cache the model at build time
-RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
-    AutoTokenizer.from_pretrained('roberta-large-mnli'); \
-    AutoModelForSequenceClassification.from_pretrained('roberta-large-mnli')"
-
-# Copy app code
-COPY . .
-
-CMD ["app.handler"]
-```
-
-#### 3.2 Add Mangum Adapter
-- **File**: `app.py`
-```python
-from mangum import Mangum
-handler = Mangum(app)
-```
-
-#### 3.3 Deploy Steps
-1. Install AWS SAM CLI: `brew install aws-sam-cli`
-2. Build container: `sam build`
-3. Deploy: `sam deploy --guided`
-4. Set up custom domain in API Gateway console
-5. Point titanic.higuera.io to API Gateway URL
-
----
-
-## Execution Order
-
-| Step | Task | Effort |
-|------|------|--------|
-| 1 | Phase 0.1: Remove keyword boost (CRITICAL) | 5 min |
-| 2 | Phase 0.2-0.3: CORS + threshold fixes | 30 min |
-| 3 | Phase 2.1: Fix chunking strategy | 1 day |
-| 4 | Phase 2.2-2.3: British parser + index attribution | 1 day |
-| 5 | Phase 2.4: Re-ingest all data | 1 day |
-| 6 | Phase 1.1: ContradictionDetector with PyTorch | 1-2 days |
-| 7 | Phase 1.2-1.4: Integration + API + UI | 2 days |
-| 8 | Phase 3: Lambda container deploy | 1-2 days |
-
-**Note**: Search quality fixes FIRST - good search is prerequisite for contradiction detection.
-
----
-
-## Files to Modify
-
-| File | Changes |
-|------|---------|
-| `app.py` | Fix threshold, fix CORS, add contradiction endpoints, add Mangum handler |
-| `Services/semantic_search.py` | Fix threshold, integrate ContradictionDetector |
-| `Services/contradiction_detector.py` | NEW - RoBERTa-MNLI NLI + negation/numerical detection |
-| `static/index.html` | Add contradiction UI components |
-| `requirements.txt` | Add `transformers`, `torch`, `mangum` |
-| `Dockerfile` | NEW - Lambda container with PyTorch + model |
-| `template.yaml` | NEW - AWS SAM template for container Lambda |
-| `Services/document_ingestion.py` | Fix British Inquiry parsing (Phase 2) |
-
-## New Dependencies
+## Architecture
 
 ```
-transformers>=4.30.0   # Hugging Face transformers (RoBERTa-MNLI)
-torch                  # PyTorch (CPU-only via --index-url)
-scipy                  # Required by transformers
-mangum>=0.17.0         # FastAPI -> Lambda adapter
+PDF  ─►  DocumentIngestion (pymupdf, per-page text)
+     ─►  WitnessIndex.get_witness_by_page_range()        ← canonical attribution
+     ─►  IntelligentChunker (Q&A boundary splits, ~200-800 chars)
+     ─►  EmbeddingService (OpenAI text-embedding-3-large @ 1024d)
+     ─►  PineconeVectorStore (cosine, AWS serverless)
+                │
+                ▼
+       SemanticSearchEngine.search()
+                │
+                ├──► /search                  (top-K results as-is)
+                │
+                └──► ContradictionDetector    (Claude Haiku 4.5)
+                          │
+                          ├── pair witnesses across results
+                          ├── ContradictionCache.get_or_compute()
+                          │     └── SQLiteCache (local) / DynamoDBCache (stub)
+                          ▼
+                     /search/contradictions   (filtered by min_confidence)
 ```
 
----
+## Services
 
-## Resume Keywords
+| File | Role |
+|---|---|
+| `Services/document_ingestion.py` | PDF text extraction via pymupdf, per-page or full-doc |
+| `Services/witness_index.py` | Canonical source of truth for witness attribution by page number (98 witnesses) |
+| `Services/chunking.py` | Splits testimony on Q&A boundaries (`Senator SMITH.` / `Mr. LOWE.`), respects sentence breaks |
+| `Services/embeddings.py` | OpenAI embeddings, 1024-dim, with in-memory cache |
+| `Services/vector_storage.py` | `PineconeVectorStore` (prod, cosine similarity, AWS serverless) |
+| `Services/semantic_search.py` | Search orchestration; `get_related_contradictions()` delegates to the detector |
+| `Services/contradiction_detector.py` | Claude Haiku 4.5 pairwise comparison, structured JSON output, cache-first |
+| `Services/contradiction_cache.py` | Pluggable cache: `SQLiteCache` (local) + `DynamoDBCache` stub for production |
+| `Services/pinecone_upload.py` | Ingestion CLI: `--test`, `--full-ingest`, `--stats`. Migration paths are legacy |
 
-- **PyTorch** - Deep learning framework
-- **Transformers / Hugging Face** - NLP model library
-- **RoBERTa-MNLI** - Pre-trained NLI model
-- **Natural Language Inference (NLI)** - Text entailment/contradiction classification
-- **AWS Lambda** - Serverless compute
-- **Containerized ML** - Docker + ML models
-- **RAG** - Retrieval-Augmented Generation
-- **Pinecone** - Vector database
-- **FastAPI** - Modern Python web framework
+## Running things
 
----
+```bash
+# Setup
+pip install -r requirements.txt
 
-## Verification
+# .env required:  OPENAI_API_KEY, ANTHROPIC_API_KEY, PINECONE_API_KEY
+# .env optional:  PINECONE_ENVIRONMENT=us-east-1      (default us-east-1; AWS region — do NOT pass a GCP-style region)
+#                 PINECONE_INDEX_NAME=titanic-rag     (default titanic-rag)
+#                 ALLOWED_ORIGINS=http://localhost:8000,...  (default localhost; "*" for wildcard)
+#                 CACHE_BACKEND=sqlite                (default sqlite; "dynamodb" is a stub)
 
-1. **Local search works**: `curl -X POST http://localhost:8000/search -d '{"query": "iceberg", "similarity_threshold": 0.5}'`
-2. **NLI model loads**: ContradictionDetector initializes RoBERTa-MNLI without errors
-3. **Contradictions detected**: Query "ship speed" returns contradictions with NLI classification
-4. **UI displays contradictions**: Side-by-side view with confidence score
-5. **Container builds**: `sam build` completes successfully
-6. **Production**: https://titanic.higuera.io loads and searches work
+# Verify Pinecone connection
+python Services/pinecone_upload.py --test
 
----
+# Full re-ingestion (if index is empty/stale) — ~10-15 min, ~$0.10 in OpenAI
+python Services/pinecone_upload.py --full-ingest
 
-*Last Updated: January 2026*
-*Status: Implementing Contradiction Detection with PyTorch + RoBERTa-MNLI*
-*Deployment Target: AWS Lambda Container → titanic.higuera.io*
+# Run the app
+python app.py        # → http://localhost:8000
+
+# Run tests
+python -m pytest Testing/Search Testing/Chunking Testing/Witnesses -q
+```
+
+## API
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/search` | POST | Standard semantic search, returns top-K chunks |
+| `/search/contradictions` | POST | Same shape + `min_confidence` (default 0.6); returns LLM-verified contradictions |
+| `/witnesses` | GET | Witness filter list derived from `WitnessIndex` (70 names, optional `?search=` substring) |
+| `/health` | GET | Vector store + chunk count |
+| `/documents` | GET | Index metadata |
+
+## Conventions and gotchas
+
+- **WitnessIndex is the only correct attribution path.** Any code doing regex-based witness extraction from body text is wrong and predates the refactor.
+- **Q&A format is Senate-specific** (`Senator SMITH.` / `Mr. LOWE.`). British Inquiry uses `Speaker:` style; needs its own parser.
+- **Witness names in storage are lowercase real names** (e.g. `Charles Herbert Lightoller`). If you see ALL-CAPS or sentence-fragment names in Pinecone, that's stale data from a pre-refactor ingestion.
+- **Chunking strategy is Q&A-bound, not size-bound.** ~16K chunks for the US corpus, avg ~200 chars/chunk. Don't assume 800.
+- **Pinecone region defaults to `us-east-1`** (AWS), matching the AWS serverless spec the code creates. Override via `PINECONE_ENVIRONMENT`. Do NOT pass a GCP-style region — index create will 400.
+- **`messages.parse()` requires `anthropic>=0.95`** (we pin `>=0.100`). Older versions silently lack the method and return AttributeError at runtime.
+
+## Test suite state
+
+Run `python -m pytest Testing/ --tb=no` for a snapshot. The legacy ChromaDB tests
+and `Testing/Ingestion/ingest_full_usinq.py` have been deleted, so the suite
+runs cleanly in a fresh env (modulo any tests that require a live
+OpenAI/Pinecone connection, which will skip or error on missing credentials).
+
+## Known issues / what's next
+
+| Priority | Item |
+|---|---|
+| Medium | British Inquiry pipeline: speaker-tag parser (`Name:` at line start), British witness index, source corpus (`Text/BritishInquiry.pdf` now in repo) |
+| Medium | Phase 4 from the contradiction plan: `DynamoDBCache` impl, `slowapi` rate limit, Dockerfile + App Runner deploy |
+| Medium | Async/parallel pair calls in `ContradictionDetector` — O(N²) sequential Haiku calls can be `asyncio.gather`'d for 5–10× latency drop on multi-witness queries |
+| Low | 2 `PytestReturnNotNoneWarning`s in `test_bold_artifacts.py` |
+
+## File map (rough)
+
+```
+.
+├── app.py                              # FastAPI entry
+├── requirements.txt
+├── CLAUDE.md                           # this file
+├── README.md                           # public intro
+├── CONTRADICTION_PLAN.md               # original killer-feature plan
+├── Services/
+│   ├── document_ingestion.py
+│   ├── witness_index.py
+│   ├── chunking.py
+│   ├── embeddings.py
+│   ├── vector_storage.py
+│   ├── semantic_search.py
+│   ├── contradiction_detector.py
+│   ├── contradiction_cache.py
+│   └── pinecone_upload.py              # ingestion CLI
+├── Testing/                            # pytest layout
+│   ├── Chunking/  DocumentIngestion/  Embeddings/
+│   ├── Ingestion/  Search/  Storage/  Witnesses/
+│   └── *.md                            # test specs
+├── Text/                               # source PDFs
+│   ├── USInq.pdf                       # 1,173 pages, US Senate (ingested)
+│   ├── British_Data.pdf                # 7-page format sample
+│   └── *.pdf                           # other reference PDFs
+└── static/
+    └── index.html                      # single-page UI
+```

@@ -4,7 +4,7 @@ This replaces regex-based witness extraction with precise page-based attribution
 """
 
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 import re
 
 
@@ -219,7 +219,7 @@ class WitnessIndex:
         """Get all testimonies for a recalled witness."""
         return [w for w in self.witnesses if w.name == witness_name]
     
-    def get_statistics(self) -> Dict[str, any]:
+    def get_statistics(self) -> Dict[str, Any]:
         """Get statistics about the witness index."""
         unique = self.get_unique_witnesses()
         return {
