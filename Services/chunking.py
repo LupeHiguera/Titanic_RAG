@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 import re
@@ -20,34 +21,118 @@ class WitnessChunk:
     metadata: ChunkMetadata
 
 
+class BoundarySplitter(ABC):
+    """Strategy for splitting raw testimony text on inquiry-specific boundaries
+    (Senate Q&A turns, British numbered Q&A, etc.). Implementations return a
+    list of coherent sections; the chunker further splits any section that
+    exceeds chunk_size by sentence."""
+
+    @abstractmethod
+    def split(self, text: str) -> List[str]:
+        ...
+
+
+class SenateBoundarySplitter(BoundarySplitter):
+    """US Senate Inquiry format: `Senator SMITH.` / `Mr. LOWE.` speaker turns.
+    A Q&A pair is a Senator-led turn plus all witness responses until the next
+    Senator turn.
+    """
+
+    _SPEAKER_PATTERN = r'(?:Senator|Mr\.|Mrs\.|Miss|Captain)\s+[A-Z][A-Z\s]*[A-Z]*\.'
+
+    def split(self, text: str) -> List[str]:
+        positions = [m.start() for m in re.finditer(self._SPEAKER_PATTERN, text)]
+        if len(positions) < 2:
+            return [text]
+
+        sections = []
+        i = 0
+        while i < len(positions):
+            start = positions[i]
+            next_senator = None
+            for j in range(i + 1, len(positions)):
+                segment = text[positions[j]:positions[j] + 30]
+                if segment.startswith('Senator'):
+                    if j > i + 1 or not text[start:start + 30].startswith('Senator'):
+                        next_senator = j
+                        break
+                    else:
+                        next_senator = j
+                        break
+
+            if next_senator is not None:
+                section = text[start:positions[next_senator]].strip()
+                if section:
+                    sections.append(section)
+                i = next_senator
+            else:
+                section = text[start:].strip()
+                if section:
+                    sections.append(section)
+                break
+
+        return sections or [text]
+
+
+class BritishBoundarySplitter(BoundarySplitter):
+    """British Wreck Commissioner's Inquiry format: numbered Q&A like
+    `190. Question? - Answer`. Each Q&A is a coherent unit. Splits on the
+    `\\nN.` anchor between numbered exchanges.
+
+    Strips embedded `Page N` markers (inquiry transcript pagination
+    surfaces as standalone lines mid-testimony) before splitting.
+    """
+
+    # Match a Q&A number anywhere (word-boundary anchored), since the transcript
+    # often has two Q&As on the same line: "... - Not any.  42. Just tell us..."
+    # Lookahead requires a capital letter or `(` (examiner label) after the
+    # period to avoid catching dates, list items, or section refs.
+    _QA_NUMBER = re.compile(r'\b(\d+)\.\s+(?=[A-Z(])')
+    _PAGE_MARKER = re.compile(r'^\s*Page\s+\d+\s*$', re.MULTILINE)
+
+    def split(self, text: str) -> List[str]:
+        text = self._PAGE_MARKER.sub('', text)
+
+        positions = [m.start() for m in self._QA_NUMBER.finditer(text)]
+        if not positions:
+            return [text]
+
+        sections = []
+        for idx, start in enumerate(positions):
+            end = positions[idx + 1] if idx + 1 < len(positions) else len(text)
+            section = text[start:end].strip()
+            if section:
+                sections.append(section)
+
+        return sections or [text]
+
+
 class IntelligentChunker:
-    def __init__(self, chunk_size: int = 800, overlap_size: int = 80, preserve_witness_context: bool = True):
+    def __init__(self, chunk_size: int = 800, overlap_size: int = 80,
+                 preserve_witness_context: bool = True,
+                 splitter: Optional[BoundarySplitter] = None):
         self.chunk_size = chunk_size
         self.overlap_size = overlap_size
         self.preserve_witness_context = preserve_witness_context
+        self.splitter: BoundarySplitter = splitter or SenateBoundarySplitter()
 
     def chunk_witness_contexts(self, witness_contexts: List[Any]) -> List[WitnessChunk]:
         """Chunk witness contexts into manageable pieces while preserving context."""
         chunks = []
 
         for i, context in enumerate(witness_contexts):
-            # Handle both dict and object contexts
             if isinstance(context, dict):
                 witness_name = context['witness']
                 testimony = context['testimony']
                 page_num = context.get('page_number', 1)
                 doc_name = context.get('document_name', 'Unknown')
             else:
-                # Handle mock objects and dataclass objects
                 witness_name = getattr(context, 'witness', 'Unknown')
                 testimony = getattr(context, 'testimony', '')
                 page_num = getattr(context, 'page_number', 1)
                 doc_name = getattr(context, 'document_name', 'Unknown')
 
-            # Credibility scoring is a legacy field — kept on metadata for back-compat
             credibility_score = 0.0
-
-            # Split testimony into chunks while preserving Q&A structure
             text_chunks = self._split_text_preserving_context(testimony)
 
             for j, chunk_text in enumerate(text_chunks):
@@ -70,81 +155,21 @@ class IntelligentChunker:
         return chunks
 
     def _split_text_preserving_context(self, text: str) -> List[str]:
-        """Split text into chunks while preserving Q&A context and sentence boundaries."""
         if len(text) <= self.chunk_size:
             return [text]
 
+        sections = self.splitter.split(text)
+
         chunks = []
-
-        # First, try to split on Q&A boundaries
-        qa_splits = self._split_on_qa_boundaries(text)
-
-        for qa_section in qa_splits:
-            # If Q&A section is still too long, split by sentences
-            if len(qa_section) <= self.chunk_size:
-                chunks.append(qa_section)
+        for section in sections:
+            if len(section) <= self.chunk_size:
+                chunks.append(section)
             else:
-                sentence_chunks = self._split_by_sentences(qa_section)
-                chunks.extend(sentence_chunks)
+                chunks.extend(self._split_by_sentences(section))
 
-        # Add overlap between chunks
         return self._add_overlap(chunks)
 
-    def _split_on_qa_boundaries(self, text: str) -> List[str]:
-        """Split text on Q&A boundaries matching US Senate Inquiry format.
-
-        The actual format uses speaker labels like:
-            Senator SMITH. What happened next?
-            Mr. LOWE. I went to the deck.
-        """
-        # Match speaker turns: Title SURNAME. (at start of line or after newline)
-        speaker_pattern = r'(?:Senator|Mr\.|Mrs\.|Miss|Captain)\s+[A-Z][A-Z\s]*[A-Z]*\.'
-
-        # Find all speaker turn positions
-        positions = [m.start() for m in re.finditer(speaker_pattern, text)]
-
-        if len(positions) < 2:
-            return [text]
-
-        # Group into question-answer pairs: Senator asks, witness answers
-        sections = []
-        i = 0
-        while i < len(positions):
-            start = positions[i]
-            # Find the start of the next Senator question (skip witness responses)
-            # A Q&A pair = Senator line + witness response(s) until next Senator line
-            next_senator = None
-            for j in range(i + 1, len(positions)):
-                segment = text[positions[j]:positions[j] + 30]
-                if segment.startswith('Senator'):
-                    # Only start a new section if we've seen at least one non-Senator turn
-                    if j > i + 1 or not text[start:start + 30].startswith('Senator'):
-                        next_senator = j
-                        break
-                    else:
-                        next_senator = j
-                        break
-
-            if next_senator is not None:
-                section = text[start:positions[next_senator]].strip()
-                if section:
-                    sections.append(section)
-                i = next_senator
-            else:
-                # Last section: from current position to end
-                section = text[start:].strip()
-                if section:
-                    sections.append(section)
-                break
-
-        # If we couldn't split meaningfully, return as-is
-        if not sections:
-            return [text]
-
-        return sections
-
     def _split_by_sentences(self, text: str) -> List[str]:
-        """Split text by sentences while respecting chunk size limits."""
         sentences = re.split(r'[.!?]+', text)
         chunks = []
         current_chunk = ""
@@ -154,38 +179,33 @@ class IntelligentChunker:
             if not sentence:
                 continue
 
-            # Check if adding this sentence would exceed chunk size
             potential_chunk = current_chunk + " " + sentence + "."
             potential_chunk = potential_chunk.strip()
 
             if len(potential_chunk) <= self.chunk_size:
                 current_chunk = potential_chunk
             else:
-                # Save current chunk and start new one
                 if current_chunk:
                     chunks.append(current_chunk)
                 current_chunk = sentence + "."
 
-        # Add final chunk
         if current_chunk:
             chunks.append(current_chunk)
 
         return chunks
 
     def _add_overlap(self, chunks: List[str]) -> List[str]:
-        """Add overlap between consecutive chunks."""
         if len(chunks) <= 1:
             return chunks
 
-        overlapped_chunks = [chunks[0]]  # First chunk unchanged
+        overlapped_chunks = [chunks[0]]
 
         for i in range(1, len(chunks)):
-            prev_chunk = chunks[i-1]
+            prev_chunk = chunks[i - 1]
             current_chunk = chunks[i]
 
-            # Take last few words from previous chunk as overlap
             prev_words = prev_chunk.split()
-            overlap_words = prev_words[-min(self.overlap_size//10, len(prev_words)//2):]
+            overlap_words = prev_words[-min(self.overlap_size // 10, len(prev_words) // 2):]
 
             if overlap_words:
                 overlap_text = " ".join(overlap_words)
@@ -198,7 +218,6 @@ class IntelligentChunker:
         return overlapped_chunks
 
     def _determine_source_type(self, document_name: str) -> str:
-        """Determine inquiry type from document name."""
         doc_lower = document_name.lower()
         if 'british' in doc_lower or 'wreck commissioner' in doc_lower:
             return 'british_inquiry'
@@ -206,4 +225,3 @@ class IntelligentChunker:
             return 'us_inquiry'
         else:
             return 'other'
-
