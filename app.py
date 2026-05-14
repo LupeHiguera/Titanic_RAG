@@ -63,6 +63,16 @@ class SearchResponse(BaseModel):
     total_results: int
 
 
+class ContradictionSearchRequest(SearchRequest):
+    min_confidence: float = 0.6
+
+
+class ContradictionSearchResponse(BaseModel):
+    query: str
+    contradictions: List[Dict[str, Any]]
+    total_contradictions: int
+
+
 @app.get("/")
 async def root():
     """Serve the main HTML page."""
@@ -129,6 +139,40 @@ async def search_documents(request: SearchRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.post("/search/contradictions", response_model=ContradictionSearchResponse)
+async def search_contradictions(request: ContradictionSearchRequest):
+    """Find contradictory statements across witnesses for a query."""
+    try:
+        filters = {}
+        if request.witness_name:
+            filters["witness_name"] = request.witness_name
+        if request.source_type:
+            filters["source_type"] = request.source_type
+
+        search_query = SearchQuery(
+            text=request.query,
+            top_k=request.top_k,
+            filters=filters,
+            similarity_threshold=request.similarity_threshold,
+        )
+
+        engine = get_search_engine()
+        contradictions = engine.get_related_contradictions(
+            search_query, min_confidence=request.min_confidence
+        )
+
+        return ContradictionSearchResponse(
+            query=request.query,
+            contradictions=contradictions,
+            total_contradictions=len(contradictions),
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Contradiction search failed: {str(e)}")
 
 
 @app.get("/documents")

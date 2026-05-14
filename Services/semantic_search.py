@@ -31,12 +31,14 @@ class SearchResult:
 class SemanticSearchEngine:
     """Main search orchestrator for Titanic witness testimony semantic search."""
     
-    def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore, 
-                 default_top_k: int = 5, similarity_threshold: float = 0.7):
+    def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore,
+                 default_top_k: int = 5, similarity_threshold: float = 0.7,
+                 contradiction_detector: Optional[Any] = None):
         self.embedding_service = embedding_service
         self.vector_store = vector_store
         self.default_top_k = default_top_k
         self.similarity_threshold = similarity_threshold
+        self._contradiction_detector = contradiction_detector
     
     def search(self, query: SearchQuery) -> List[SearchResult]:
         """Main search method that returns ranked results with explanations."""
@@ -183,16 +185,38 @@ class SemanticSearchEngine:
             # Handle mock objects or non-string content
             return str(content)
     
-    def get_related_contradictions(self, query: SearchQuery) -> List[Dict[str, Any]]:
-        """Find contradictory statements on the same topic."""
-        # Get search results
+    def get_related_contradictions(self, query: SearchQuery,
+                                   min_confidence: float = 0.6) -> List[Dict[str, Any]]:
+        """Find contradictory statements across witnesses for the query.
+
+        Delegates to ContradictionDetector for LLM-based pairwise comparison.
+        Verdicts are cached, so repeat queries hit cache instead of the LLM.
+        """
         results = self.search(query)
-        
-        # Group by topic/witness
-        contradictions = []
-        
-        # For now, return empty list - contradiction detection will be enhanced later
-        return contradictions
+        if not results:
+            return []
+
+        if self._contradiction_detector is None:
+            from Services.contradiction_detector import ContradictionDetector
+            self._contradiction_detector = ContradictionDetector()
+
+        chunks = [r.chunk for r in results]
+        contradictions = self._contradiction_detector.detect(chunks, query.text)
+
+        return [
+            {
+                "witness_a": c.witness_a,
+                "witness_b": c.witness_b,
+                "chunk_a": c.chunk_a,
+                "chunk_b": c.chunk_b,
+                "claim_a": c.claim_a,
+                "claim_b": c.claim_b,
+                "confidence": round(c.confidence, 3),
+                "explanation": c.explanation,
+            }
+            for c in contradictions
+            if c.confidence >= min_confidence
+        ]
     
     def get_witness_perspective_summary(self, query: SearchQuery) -> Dict[str, Any]:
         """Get summary of different witness perspectives on a topic."""

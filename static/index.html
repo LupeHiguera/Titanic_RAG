@@ -3,8 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Titanic Historical RAG - Search Witness Testimonies</title>
+    <title>Titanic RAG - Search Witness Testimonies</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1a2035;
+            --bg-card-hover: #1f2847;
+            --bg-input: #0f1629;
+            --border-color: #2a3454;
+            --border-focus: #4f7cff;
+            --text-primary: #e8ecf4;
+            --text-secondary: #8892a8;
+            --text-muted: #5c6478;
+            --accent: #4f7cff;
+            --accent-hover: #6b91ff;
+            --accent-glow: rgba(79, 124, 255, 0.15);
+            --gold: #c9a84c;
+            --gold-muted: rgba(201, 168, 76, 0.15);
+            --success: #34d399;
+            --error: #f87171;
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.3);
+            --shadow-glow: 0 0 40px rgba(79, 124, 255, 0.08);
+            --transition: 0.2s ease;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,235 +41,343 @@
         }
 
         body {
-            font-family: 'Georgia', 'Times New Roman', serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: var(--text-primary);
+            background: var(--bg-primary);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* --- Background Pattern --- */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(ellipse at 20% 0%, rgba(79, 124, 255, 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 100%, rgba(201, 168, 76, 0.04) 0%, transparent 60%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* --- Layout --- */
+        .app {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
             min-height: 100vh;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 960px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 0 24px;
+            width: 100%;
         }
 
-        .header {
-            text-align: center;
-            color: white;
-            margin-bottom: 30px;
+        /* --- Navigation Bar --- */
+        .navbar {
+            border-bottom: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            background: rgba(10, 14, 26, 0.8);
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
 
-        .header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-
-        .header p {
-            font-size: 1.2rem;
-            opacity: 0.9;
-        }
-
-        .search-container {
-            background: white;
-            border-radius: 10px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            margin-bottom: 30px;
-        }
-
-        .search-form {
-            display: grid;
-            gap: 20px;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-
-        .form-group {
+        .navbar .container {
             display: flex;
-            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            height: 60px;
         }
 
-        .form-group.full-width {
-            grid-column: 1 / -1;
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: var(--text-primary);
         }
 
-        label {
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #2a5298;
-        }
-
-        input[type="text"], select, input[type="number"] {
-            padding: 10px;
-            border: 2px solid #ddd;
-            border-radius: 5px;
+        .nav-brand-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, var(--accent) 0%, #3b5cc6 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 16px;
-            transition: border-color 0.3s;
         }
 
-        input[type="text"]:focus, select:focus, input[type="number"]:focus {
+        .nav-brand-text {
+            font-family: 'Playfair Display', serif;
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: -0.02em;
+        }
+
+        .nav-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: background var(--transition);
+        }
+
+        .status-dot.online {
+            background: var(--success);
+            box-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+        }
+
+        .status-dot.error {
+            background: var(--error);
+            box-shadow: 0 0 8px rgba(248, 113, 113, 0.4);
+        }
+
+        /* --- Hero Section --- */
+        .hero {
+            text-align: center;
+            padding: 64px 0 48px;
+        }
+
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--gold-muted);
+            color: var(--gold);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 6px 14px;
+            border-radius: 100px;
+            border: 1px solid rgba(201, 168, 76, 0.2);
+            margin-bottom: 20px;
+        }
+
+        .hero h1 {
+            font-family: 'Playfair Display', serif;
+            font-size: 2.8rem;
+            font-weight: 700;
+            line-height: 1.15;
+            letter-spacing: -0.03em;
+            margin-bottom: 16px;
+            background: linear-gradient(180deg, #ffffff 0%, #a8b4cc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 560px;
+            margin: 0 auto;
+            line-height: 1.7;
+        }
+
+        /* --- Search Card --- */
+        .search-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 32px;
+            box-shadow: var(--shadow-card);
+            margin-bottom: 32px;
+        }
+
+        .search-main {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .search-input-wrap {
+            flex: 1;
+            position: relative;
+        }
+
+        .search-input-wrap svg {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 14px 16px 14px 46px;
+            background: var(--bg-input);
+            border: 1.5px solid var(--border-color);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-family: inherit;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .search-input:focus {
             outline: none;
-            border-color: #2a5298;
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px var(--accent-glow);
         }
 
         .search-btn {
-            padding: 12px 30px;
-            background: #2a5298;
-            color: white;
+            padding: 14px 28px;
+            background: var(--accent);
+            color: #fff;
             border: none;
-            border-radius: 5px;
-            font-size: 16px;
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            font-weight: 600;
+            font-family: inherit;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: background var(--transition), transform var(--transition);
+            white-space: nowrap;
         }
 
         .search-btn:hover {
-            background: #1e3c72;
+            background: var(--accent-hover);
+        }
+
+        .search-btn:active {
+            transform: scale(0.97);
         }
 
         .search-btn:disabled {
-            background: #ccc;
+            opacity: 0.5;
             cursor: not-allowed;
+            transform: none;
         }
 
-        .results-container {
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            display: none;
-        }
-
-        .results-header {
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #2a5298;
-        }
-
-        .result-item {
-            background: #f8f9fa;
-            border-left: 4px solid #2a5298;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 0 5px 5px 0;
-        }
-
-        .result-header {
+        /* --- Filters --- */
+        .filters-toggle {
             display: flex;
-            justify-content: between;
-            align-items: flex-start;
-            margin-bottom: 10px;
-            flex-wrap: wrap;
-            gap: 10px;
+            align-items: center;
+            gap: 6px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-family: inherit;
+            cursor: pointer;
+            padding: 4px 0;
+            transition: color var(--transition);
         }
 
-        .witness-info {
-            flex-grow: 1;
+        .filters-toggle:hover {
+            color: var(--text-primary);
         }
 
-        .witness-name {
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: #1e3c72;
-            margin-bottom: 5px;
+        .filters-toggle svg {
+            width: 16px;
+            height: 16px;
+            transition: transform var(--transition);
         }
 
-        .metadata {
-            color: #666;
+        .filters-toggle.open svg {
+            transform: rotate(180deg);
+        }
+
+        .filters-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease, margin 0.3s ease, opacity 0.3s ease;
+            opacity: 0;
+        }
+
+        .filters-panel.open {
+            max-height: 400px;
+            margin-top: 20px;
+            opacity: 1;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field-label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .field-input,
+        .field-select {
+            padding: 10px 14px;
+            background: var(--bg-input);
+            border: 1.5px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
             font-size: 0.9rem;
+            font-family: inherit;
+            transition: border-color var(--transition), box-shadow var(--transition);
+            appearance: none;
         }
 
-        .scores {
-            text-align: right;
-            font-size: 0.9rem;
+        .field-select {
+            background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%235c6478' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+            padding-right: 36px;
         }
 
-        .score {
-            background: #2a5298;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 12px;
-            margin-left: 5px;
+        .field-input:focus,
+        .field-select:focus {
+            outline: none;
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px var(--accent-glow);
         }
 
-        .content {
-            font-size: 1rem;
-            line-height: 1.8;
-            margin: 15px 0;
-            white-space: pre-wrap;
-        }
-
-        .explanation {
-            background: #e9ecef;
-            padding: 10px;
-            border-radius: 5px;
-            font-style: italic;
-            color: #495057;
-            border-left: 3px solid #6c757d;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-
-        .loading::after {
-            content: '';
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            margin-left: 10px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #2a5298;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 5px;
-            border-left: 4px solid #dc3545;
-        }
-
-        .no-results {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-
-        .system-status {
-            background: rgba(255,255,255,0.1);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            font-size: 0.9rem;
+        /* --- Witness Autocomplete --- */
+        .autocomplete-wrap {
+            position: relative;
         }
 
         .witness-dropdown {
-            position: relative;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
             max-height: 200px;
             overflow-y: auto;
-            background: white;
-            border: 1px solid #ddd;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
             border-top: none;
-            border-radius: 0 0 5px 5px;
+            border-radius: 0 0 var(--radius-sm) var(--radius-sm);
             display: none;
-            z-index: 1000;
+            z-index: 50;
         }
 
         .witness-dropdown.show {
@@ -248,19 +385,18 @@
         }
 
         .witness-option {
-            padding: 10px;
+            padding: 10px 14px;
             cursor: pointer;
-            border-bottom: 1px solid #f0f0f0;
-            transition: background-color 0.2s;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid rgba(42, 52, 84, 0.5);
+            transition: background var(--transition), color var(--transition);
         }
 
         .witness-option:hover,
-        .witness-option.selected {
-            background-color: #f8f9fa;
-        }
-
         .witness-option.highlighted {
-            background-color: #e3f2fd;
+            background: var(--accent-glow);
+            color: var(--text-primary);
         }
 
         .witness-option:last-child {
@@ -268,376 +404,931 @@
         }
 
         .no-witnesses {
-            padding: 10px;
-            color: #666;
-            font-style: italic;
+            padding: 12px 14px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
             text-align: center;
         }
 
-        @media (max-width: 768px) {
-            .form-row {
+        /* --- Results --- */
+        .results-section {
+            display: none;
+            margin-bottom: 48px;
+            animation: fadeUp 0.3s ease;
+        }
+
+        .results-section.visible {
+            display: block;
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .results-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .results-header h2 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .results-count {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* --- Result Card --- */
+        .result-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 24px;
+            margin-bottom: 16px;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+
+        .result-card:hover {
+            border-color: rgba(79, 124, 255, 0.3);
+            box-shadow: var(--shadow-glow);
+        }
+
+        .result-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            gap: 12px;
+        }
+
+        .result-witness {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .result-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 4px;
+            flex-wrap: wrap;
+        }
+
+        .result-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.04);
+            padding: 3px 10px;
+            border-radius: 100px;
+            border: 1px solid var(--border-color);
+        }
+
+        .result-scores {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .score-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 100px;
+        }
+
+        .score-similarity {
+            background: var(--accent-glow);
+            color: var(--accent);
+            border: 1px solid rgba(79, 124, 255, 0.2);
+        }
+
+        .score-relevance {
+            background: var(--gold-muted);
+            color: var(--gold);
+            border: 1px solid rgba(201, 168, 76, 0.2);
+        }
+
+        .result-content {
+            font-size: 0.92rem;
+            line-height: 1.8;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            margin-bottom: 16px;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-sm);
+            border-left: 3px solid var(--border-color);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .result-explanation {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-style: italic;
+            padding-left: 16px;
+            border-left: 2px solid var(--border-color);
+        }
+
+        /* --- Contradiction toggle --- */
+        .filter-row-full {
+            grid-column: 1 / -1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-top: 4px;
+            border-top: 1px dashed var(--border-color);
+            margin-top: 4px;
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .toggle-row input[type="checkbox"] {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 38px;
+            height: 22px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-color);
+            border-radius: 100px;
+            transition: background var(--transition), border-color var(--transition);
+            flex-shrink: 0;
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: transform var(--transition), background var(--transition);
+        }
+
+        .toggle-row input:checked + .toggle-switch {
+            background: var(--accent-glow);
+            border-color: var(--accent);
+        }
+
+        .toggle-row input:checked + .toggle-switch::after {
+            transform: translateX(16px);
+            background: var(--accent);
+        }
+
+        .toggle-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .confidence-control {
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            padding-left: 50px;
+        }
+
+        .confidence-control.visible {
+            display: flex;
+        }
+
+        .confidence-control input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        .confidence-value {
+            color: var(--accent);
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+        }
+
+        /* --- Contradiction card --- */
+        .contradiction-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--gold);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            margin-bottom: 16px;
+            transition: background var(--transition);
+        }
+
+        .contradiction-card:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .contradiction-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .contradiction-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--gold);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .contradiction-label::before {
+            content: '⚠';
+            font-size: 1rem;
+        }
+
+        .confidence-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 100px;
+            background: var(--gold-muted);
+            color: var(--gold);
+            border: 1px solid rgba(201, 168, 76, 0.25);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .contradiction-pair {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 12px;
+            align-items: stretch;
+            margin-bottom: 16px;
+        }
+
+        .contradiction-witness {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-sm);
+            padding: 14px 16px;
+            border-left: 3px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .contradiction-witness-name {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .contradiction-claim {
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+
+        .contradiction-quote {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-style: italic;
+            line-height: 1.6;
+            max-height: 120px;
+            overflow-y: auto;
+            padding-top: 8px;
+            border-top: 1px dashed var(--border-color);
+        }
+
+        .contradiction-vs {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            letter-spacing: 0.15em;
+            min-width: 28px;
+        }
+
+        .contradiction-explanation {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            padding: 12px 14px;
+            background: rgba(201, 168, 76, 0.06);
+            border-radius: var(--radius-sm);
+            border-left: 2px solid var(--gold);
+        }
+
+        /* --- Loading --- */
+        .loading-state {
+            text-align: center;
+            padding: 48px 0;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        /* --- Error / Empty --- */
+        .error-msg {
+            background: rgba(248, 113, 113, 0.08);
+            color: var(--error);
+            padding: 16px 20px;
+            border-radius: var(--radius-sm);
+            border: 1px solid rgba(248, 113, 113, 0.2);
+            font-size: 0.9rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 0;
+            color: var(--text-muted);
+        }
+
+        .empty-state h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state p {
+            font-size: 0.9rem;
+        }
+
+        /* --- Footer --- */
+        .footer {
+            margin-top: auto;
+            border-top: 1px solid var(--border-color);
+            padding: 24px 0;
+        }
+
+        .footer .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .footer-text {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .footer-links a {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color var(--transition);
+        }
+
+        .footer-links a:hover {
+            color: var(--text-secondary);
+        }
+
+        /* --- Scrollbar --- */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* --- Mobile --- */
+        @media (max-width: 640px) {
+            .hero {
+                padding: 40px 0 32px;
+            }
+
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .hero p {
+                font-size: 0.95rem;
+            }
+
+            .search-card {
+                padding: 20px;
+            }
+
+            .search-main {
+                flex-direction: column;
+            }
+
+            .search-btn {
+                width: 100%;
+            }
+
+            .filters-panel {
                 grid-template-columns: 1fr;
             }
-            
-            .result-header {
+
+            .result-top {
                 flex-direction: column;
-                align-items: flex-start;
             }
-            
-            .scores {
-                text-align: left;
+
+            .result-scores {
+                align-self: flex-start;
             }
-            
-            .header h1 {
-                font-size: 2rem;
+
+            .navbar .container {
+                height: 52px;
+            }
+
+            .nav-brand-text {
+                font-size: 0.95rem;
+            }
+
+            .nav-status span:not(.status-dot) {
+                display: none;
+            }
+
+            .footer .container {
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+            }
+
+            .result-card {
+                padding: 18px;
+            }
+
+            .contradiction-pair {
+                grid-template-columns: 1fr;
+            }
+
+            .contradiction-vs {
+                padding: 4px 0;
             }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>⚓ Titanic Historical RAG</h1>
-            <p>Search primary historical documents and witness testimonies from the 1912 disaster</p>
-        </div>
-
-        <div class="system-status" id="systemStatus">
-            <span id="statusText">Checking system status...</span>
-        </div>
-
-        <div class="search-container">
-            <form class="search-form" id="searchForm">
-                <div class="form-group full-width">
-                    <label for="query">Search Query</label>
-                    <input type="text" id="query" name="query" placeholder="e.g., 'lifeboat procedures', 'band playing', 'collision details'" required>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="witnessName">Filter by Witness (optional)</label>
-                        <input type="text" id="witnessName" name="witnessName" placeholder="Type to search witnesses..." autocomplete="off">
-                        <div id="witnessDropdown" class="witness-dropdown"></div>
+    <div class="app">
+        <!-- Navbar -->
+        <nav class="navbar">
+            <div class="container">
+                <a href="/" class="nav-brand">
+                    <div class="nav-brand-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20L8.5 7L12 15L15.5 7L22 20"/><path d="M6 20h12"/></svg>
                     </div>
-
-                    <div class="form-group">
-                        <label for="sourceType">Filter by Source (optional)</label>
-                        <select id="sourceType" name="sourceType">
-                            <option value="">All sources</option>
-                            <option value="us_inquiry">US Senate Inquiry</option>
-                            <option value="british_inquiry">British Inquiry</option>
-                            <option value="other">Other Sources</option>
-                        </select>
-                    </div>
+                    <span class="nav-brand-text">Titanic RAG</span>
+                </a>
+                <div class="nav-status" id="systemStatus">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Checking...</span>
                 </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="topK">Number of Results</label>
-                        <select id="topK" name="topK">
-                            <option value="5">5 results</option>
-                            <option value="10">10 results</option>
-                            <option value="15">15 results</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="threshold">Similarity Threshold</label>
-                        <select id="threshold" name="threshold">
-                            <option value="0.3">Very Low (0.3) - All results</option>
-                            <option value="0.4" selected>Low (0.4) - More results</option>
-                            <option value="0.5">Medium (0.5) - Balanced</option>
-                            <option value="0.6">High (0.6) - Most relevant</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <button type="submit" class="search-btn" id="searchBtn">
-                        🔍 Search Historical Documents
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        <div class="results-container" id="resultsContainer">
-            <div class="results-header">
-                <h2 id="resultsTitle">Search Results</h2>
-                <p id="resultsCount"></p>
             </div>
-            <div id="resultsContent"></div>
-        </div>
+        </nav>
+
+        <!-- Hero -->
+        <section class="hero">
+            <div class="container">
+                <div class="hero-eyebrow">Primary Source Research</div>
+                <h1>Search Titanic<br>Witness Testimonies</h1>
+                <p>Explore first-hand accounts from the 1912 US Senate Inquiry. Search across 30 witnesses and hundreds of testimony excerpts.</p>
+            </div>
+        </section>
+
+        <!-- Search -->
+        <main class="container">
+            <div class="search-card">
+                <form id="searchForm">
+                    <div class="search-main">
+                        <div class="search-input-wrap">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" class="search-input" id="query" placeholder="Search testimonies... e.g. 'lifeboat loading', 'ice warnings'" required>
+                        </div>
+                        <button type="submit" class="search-btn" id="searchBtn">Search</button>
+                    </div>
+
+                    <button type="button" class="filters-toggle" id="filtersToggle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        Filters
+                    </button>
+
+                    <div class="filters-panel" id="filtersPanel">
+                        <div class="field autocomplete-wrap">
+                            <label class="field-label" for="witnessName">Witness</label>
+                            <input type="text" class="field-input" id="witnessName" placeholder="Type to search witnesses..." autocomplete="off">
+                            <div id="witnessDropdown" class="witness-dropdown"></div>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="sourceType">Source</label>
+                            <select class="field-select" id="sourceType">
+                                <option value="">All sources</option>
+                                <option value="us_inquiry">US Senate Inquiry</option>
+                                <option value="british_inquiry">British Inquiry</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="topK">Results</label>
+                            <select class="field-select" id="topK">
+                                <option value="5">5 results</option>
+                                <option value="10">10 results</option>
+                                <option value="15">15 results</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="threshold">Threshold</label>
+                            <select class="field-select" id="threshold">
+                                <option value="0.3">Low (0.3)</option>
+                                <option value="0.4" selected>Default (0.4)</option>
+                                <option value="0.5">Medium (0.5)</option>
+                                <option value="0.6">High (0.6)</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-row-full">
+                            <label class="toggle-row">
+                                <input type="checkbox" id="contradictionsToggle">
+                                <span class="toggle-switch"></span>
+                                <span class="toggle-label">Show contradictions only</span>
+                            </label>
+                            <div class="confidence-control" id="confidenceControl">
+                                <label class="field-label" for="minConfidence">
+                                    Minimum confidence: <span class="confidence-value" id="minConfidenceValue">0.60</span>
+                                </label>
+                                <input type="range" id="minConfidence" min="0.3" max="0.95" step="0.05" value="0.6">
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Results -->
+            <section class="results-section" id="resultsSection">
+                <div class="results-header">
+                    <h2 id="resultsTitle">Results</h2>
+                    <span class="results-count" id="resultsCount"></span>
+                </div>
+                <div id="resultsContent"></div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="container">
+                <span class="footer-text">Titanic Historical RAG &middot; US Senate Inquiry, 1912</span>
+                <div class="footer-links">
+                    <a href="/documents">Documents</a>
+                    <a href="/health">API Health</a>
+                </div>
+            </div>
+        </footer>
     </div>
 
     <script>
-        // Global variables
+        // --- State ---
         let availableWitnesses = [];
         let selectedWitness = '';
 
-        // Initialize the application
-        async function initApp() {
-            await checkSystemHealth();
-            await loadAvailableWitnesses();
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            await Promise.all([checkHealth(), loadWitnesses()]);
             setupWitnessAutocomplete();
-        }
+            setupFiltersToggle();
+            setupContradictionsToggle();
+        });
 
-        // Check system health
-        async function checkSystemHealth() {
-            const statusElement = document.getElementById('statusText');
+        // --- Health Check ---
+        async function checkHealth() {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
             try {
-                const response = await fetch('/health');
-                const data = await response.json();
-                
-                if (response.ok) {
-                    statusElement.innerHTML = `✅ System operational | ${data.total_documents} documents indexed`;
-                    statusElement.parentElement.style.background = 'rgba(40, 167, 69, 0.2)';
+                const res = await fetch('/health');
+                const data = await res.json();
+                if (res.ok) {
+                    dot.className = 'status-dot online';
+                    text.textContent = `${data.total_documents} documents indexed`;
                 } else {
-                    throw new Error(data.detail || 'Unknown error');
+                    throw new Error(data.detail || 'Error');
                 }
-            } catch (error) {
-                statusElement.innerHTML = `❌ System error: ${error.message}`;
-                statusElement.parentElement.style.background = 'rgba(220, 53, 69, 0.2)';
+            } catch (err) {
+                dot.className = 'status-dot error';
+                text.textContent = 'Offline';
             }
         }
 
-        // Load available witnesses from new API endpoint
-        async function loadAvailableWitnesses() {
+        // --- Witnesses ---
+        async function loadWitnesses() {
             try {
-                const response = await fetch('/witnesses');
-                const data = await response.json();
-                
+                const res = await fetch('/witnesses');
+                const data = await res.json();
                 availableWitnesses = data.witnesses || [];
-                console.log(`Loaded ${availableWitnesses.length} witnesses`);
-                
-            } catch (error) {
-                console.error('Failed to load witnesses:', error);
+            } catch (e) {
                 availableWitnesses = [];
             }
         }
 
-        // Setup witness autocomplete functionality
         function setupWitnessAutocomplete() {
-            const witnessInput = document.getElementById('witnessName');
-            const witnessDropdown = document.getElementById('witnessDropdown');
-            let debounceTimer;
-            let currentHighlight = -1;
-            let filteredWitnesses = [];
+            const input = document.getElementById('witnessName');
+            const dropdown = document.getElementById('witnessDropdown');
+            let debounce;
+            let highlight = -1;
+            let filtered = [];
 
-            // Handle input changes (with debouncing)
-            witnessInput.addEventListener('input', function(e) {
-                clearTimeout(debounceTimer);
-                debounceTimer = setTimeout(() => {
-                    const query = e.target.value.trim();
-                    searchWitnesses(query);
-                }, 200);
+            input.addEventListener('input', (e) => {
+                clearTimeout(debounce);
+                debounce = setTimeout(() => searchWitnesses(e.target.value.trim()), 200);
             });
 
-            // Handle keyboard navigation
-            witnessInput.addEventListener('keydown', function(e) {
-                if (e.key === 'ArrowDown') {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); nav(1); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); nav(-1); }
+                else if (e.key === 'Enter' && highlight >= 0 && filtered[highlight]) {
                     e.preventDefault();
-                    navigateOptions(1);
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    navigateOptions(-1);
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (currentHighlight >= 0 && filteredWitnesses[currentHighlight]) {
-                        selectWitness(filteredWitnesses[currentHighlight]);
-                    }
-                } else if (e.key === 'Escape') {
-                    hideDropdown();
+                    pick(filtered[highlight]);
                 }
+                else if (e.key === 'Escape') { hide(); }
             });
 
-            // Hide dropdown when clicking outside
-            document.addEventListener('click', function(e) {
-                if (!witnessInput.contains(e.target) && !witnessDropdown.contains(e.target)) {
-                    hideDropdown();
-                }
+            document.addEventListener('click', (e) => {
+                if (!input.contains(e.target) && !dropdown.contains(e.target)) hide();
             });
 
-            async function searchWitnesses(query) {
-                if (!query) {
-                    hideDropdown();
-                    selectedWitness = '';
-                    return;
-                }
-
+            async function searchWitnesses(q) {
+                if (!q) { hide(); selectedWitness = ''; return; }
                 try {
-                    const response = await fetch(`/witnesses?search=${encodeURIComponent(query)}`);
-                    const data = await response.json();
-                    filteredWitnesses = data.witnesses || [];
-                    
-                    displayWitnessOptions(filteredWitnesses);
-                    
-                } catch (error) {
-                    console.error('Witness search failed:', error);
-                    hideDropdown();
-                }
+                    const res = await fetch(`/witnesses?search=${encodeURIComponent(q)}`);
+                    const data = await res.json();
+                    filtered = data.witnesses || [];
+                    render(filtered);
+                } catch (e) { hide(); }
             }
 
-            function displayWitnessOptions(witnesses) {
-                currentHighlight = -1;
-                
-                if (witnesses.length === 0) {
-                    witnessDropdown.innerHTML = '<div class="no-witnesses">No witnesses found</div>';
-                    witnessDropdown.classList.add('show');
+            function render(list) {
+                highlight = -1;
+                if (!list.length) {
+                    dropdown.innerHTML = '<div class="no-witnesses">No witnesses found</div>';
+                    dropdown.classList.add('show');
                     return;
                 }
-
-                const optionsHtml = witnesses.map((witness, index) => 
-                    `<div class="witness-option" data-index="${index}" data-witness="${witness}">${witness}</div>`
+                dropdown.innerHTML = list.map((w, i) =>
+                    `<div class="witness-option" data-i="${i}" data-w="${w}">${w}</div>`
                 ).join('');
-
-                witnessDropdown.innerHTML = optionsHtml;
-                witnessDropdown.classList.add('show');
-
-                // Add click handlers to options
-                witnessDropdown.querySelectorAll('.witness-option').forEach(option => {
-                    option.addEventListener('click', () => {
-                        selectWitness(option.dataset.witness);
-                    });
-                });
+                dropdown.classList.add('show');
+                dropdown.querySelectorAll('.witness-option').forEach(opt =>
+                    opt.addEventListener('click', () => pick(opt.dataset.w))
+                );
             }
 
-            function navigateOptions(direction) {
-                if (filteredWitnesses.length === 0) return;
-
-                // Remove previous highlight
-                const prevHighlighted = witnessDropdown.querySelector('.witness-option.highlighted');
-                if (prevHighlighted) {
-                    prevHighlighted.classList.remove('highlighted');
-                }
-
-                // Calculate new highlight index
-                currentHighlight += direction;
-                if (currentHighlight < 0) currentHighlight = filteredWitnesses.length - 1;
-                if (currentHighlight >= filteredWitnesses.length) currentHighlight = 0;
-
-                // Add new highlight
-                const options = witnessDropdown.querySelectorAll('.witness-option');
-                if (options[currentHighlight]) {
-                    options[currentHighlight].classList.add('highlighted');
-                    options[currentHighlight].scrollIntoView({ block: 'nearest' });
+            function nav(dir) {
+                if (!filtered.length) return;
+                const prev = dropdown.querySelector('.witness-option.highlighted');
+                if (prev) prev.classList.remove('highlighted');
+                highlight += dir;
+                if (highlight < 0) highlight = filtered.length - 1;
+                if (highlight >= filtered.length) highlight = 0;
+                const opts = dropdown.querySelectorAll('.witness-option');
+                if (opts[highlight]) {
+                    opts[highlight].classList.add('highlighted');
+                    opts[highlight].scrollIntoView({ block: 'nearest' });
                 }
             }
 
-            function selectWitness(witness) {
-                selectedWitness = witness;
-                witnessInput.value = witness;
-                hideDropdown();
+            function pick(w) {
+                selectedWitness = w;
+                input.value = w;
+                hide();
             }
 
-            function hideDropdown() {
-                witnessDropdown.classList.remove('show');
-                currentHighlight = -1;
+            function hide() {
+                dropdown.classList.remove('show');
+                highlight = -1;
             }
         }
 
-        // Handle form submission
+        // --- Filters Toggle ---
+        function setupFiltersToggle() {
+            const btn = document.getElementById('filtersToggle');
+            const panel = document.getElementById('filtersPanel');
+            btn.addEventListener('click', () => {
+                btn.classList.toggle('open');
+                panel.classList.toggle('open');
+            });
+        }
+
+        function setupContradictionsToggle() {
+            const checkbox = document.getElementById('contradictionsToggle');
+            const control = document.getElementById('confidenceControl');
+            const slider = document.getElementById('minConfidence');
+            const valueLabel = document.getElementById('minConfidenceValue');
+
+            checkbox.addEventListener('change', () => {
+                control.classList.toggle('visible', checkbox.checked);
+            });
+
+            slider.addEventListener('input', () => {
+                valueLabel.textContent = parseFloat(slider.value).toFixed(2);
+            });
+        }
+
+        // --- Search ---
         document.getElementById('searchForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             await performSearch();
         });
 
-        // Perform search
         async function performSearch() {
             const query = document.getElementById('query').value.trim();
-            if (!query) {
-                alert('Please enter a search query');
-                return;
-            }
+            if (!query) return;
 
-            // Show loading state
-            const searchBtn = document.getElementById('searchBtn');
-            const resultsContainer = document.getElementById('resultsContainer');
-            const resultsContent = document.getElementById('resultsContent');
-            
-            searchBtn.disabled = true;
-            searchBtn.innerHTML = '🔍 Searching...';
-            
-            resultsContainer.style.display = 'block';
-            resultsContent.innerHTML = '<div class="loading">Searching historical documents...</div>';
+            const btn = document.getElementById('searchBtn');
+            const section = document.getElementById('resultsSection');
+            const content = document.getElementById('resultsContent');
+            const wantContradictions = document.getElementById('contradictionsToggle').checked;
+
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+            section.classList.add('visible');
+            content.innerHTML = `
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <div class="loading-text">${wantContradictions
+                        ? 'Comparing witness accounts for contradictions...'
+                        : 'Searching historical documents...'}</div>
+                </div>`;
 
             try {
-                // Build search request
-                const searchRequest = {
-                    query: query,
+                const body = {
+                    query,
                     top_k: parseInt(document.getElementById('topK').value),
                     similarity_threshold: parseFloat(document.getElementById('threshold').value),
                     witness_name: selectedWitness || null,
                     source_type: document.getElementById('sourceType').value || null
                 };
 
-                // Perform search
-                const response = await fetch('/search', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(searchRequest)
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.detail || 'Search failed');
+                let endpoint = '/search';
+                if (wantContradictions) {
+                    endpoint = '/search/contradictions';
+                    body.min_confidence = parseFloat(document.getElementById('minConfidence').value);
                 }
 
-                displayResults(data);
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Search failed');
 
-            } catch (error) {
-                resultsContent.innerHTML = `<div class="error">Search failed: ${error.message}</div>`;
+                if (wantContradictions) {
+                    displayContradictions(data);
+                } else {
+                    displayResults(data);
+                }
+            } catch (err) {
+                content.innerHTML = `<div class="error-msg">${err.message}</div>`;
             } finally {
-                searchBtn.disabled = false;
-                searchBtn.innerHTML = '🔍 Search Historical Documents';
+                btn.disabled = false;
+                btn.textContent = 'Search';
             }
         }
 
-        // Display search results
         function displayResults(data) {
-            const resultsTitle = document.getElementById('resultsTitle');
-            const resultsCount = document.getElementById('resultsCount');
-            const resultsContent = document.getElementById('resultsContent');
+            const title = document.getElementById('resultsTitle');
+            const count = document.getElementById('resultsCount');
+            const content = document.getElementById('resultsContent');
 
-            resultsTitle.textContent = `Search Results for "${data.query}"`;
-            resultsCount.textContent = `Found ${data.total_results} relevant testimonies`;
+            title.textContent = `Results for "${data.query}"`;
+            count.textContent = `${data.total_results} found`;
 
-            if (data.results.length === 0) {
-                resultsContent.innerHTML = `
-                    <div class="no-results">
-                        <h3>No matching testimonies found</h3>
-                        <p>Try adjusting your search terms or lowering the similarity threshold</p>
-                    </div>
-                `;
+            if (!data.results.length) {
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <h3>No matching testimonies</h3>
+                        <p>Try different search terms or lower the similarity threshold.</p>
+                    </div>`;
                 return;
             }
 
-            // Display results
-            const resultsHtml = data.results.map((result, index) => `
-                <div class="result-item">
-                    <div class="result-header">
-                        <div class="witness-info">
-                            <div class="witness-name">${result.witness_name}</div>
-                            <div class="metadata">
-                                ${result.source_type.replace('_', ' ').toUpperCase()} | Page ${result.page_number}
+            content.innerHTML = data.results.map((r) => `
+                <div class="result-card">
+                    <div class="result-top">
+                        <div>
+                            <div class="result-witness">${r.witness_name}</div>
+                            <div class="result-meta">
+                                <span class="result-tag">${formatSource(r.source_type)}</span>
+                                <span class="result-tag">Page ${r.page_number}</span>
                             </div>
                         </div>
-                        <div class="scores">
-                            <span class="score">Similarity: ${result.similarity_score}</span>
-                            <span class="score">Relevance: ${result.relevance_score}</span>
+                        <div class="result-scores">
+                            <span class="score-badge score-similarity">${r.similarity_score}</span>
+                            <span class="score-badge score-relevance">${r.relevance_score}</span>
                         </div>
                     </div>
-                    <div class="content">${result.content}</div>
-                    <div class="explanation">${result.explanation}</div>
+                    <div class="result-content">${escapeHtml(r.content)}</div>
+                    ${r.explanation ? `<div class="result-explanation">${escapeHtml(r.explanation)}</div>` : ''}
                 </div>
             `).join('');
-
-            resultsContent.innerHTML = resultsHtml;
         }
 
-        // Initialize the app when page loads
-        document.addEventListener('DOMContentLoaded', initApp);
+        function displayContradictions(data) {
+            const title = document.getElementById('resultsTitle');
+            const count = document.getElementById('resultsCount');
+            const content = document.getElementById('resultsContent');
+
+            title.textContent = `Contradictions for "${data.query}"`;
+            count.textContent = `${data.total_contradictions} found`;
+
+            if (!data.contradictions || !data.contradictions.length) {
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <h3>No contradictions detected</h3>
+                        <p>No witness statements above the confidence threshold conflict on this topic. Try lowering the minimum confidence, or search a different query.</p>
+                    </div>`;
+                return;
+            }
+
+            content.innerHTML = data.contradictions.map((c) => `
+                <div class="contradiction-card">
+                    <div class="contradiction-header">
+                        <span class="contradiction-label">Contradiction detected</span>
+                        <span class="confidence-badge">${Math.round(c.confidence * 100)}% confidence</span>
+                    </div>
+                    <div class="contradiction-pair">
+                        <div class="contradiction-witness">
+                            <div class="contradiction-witness-name">${escapeHtml(c.witness_a)}</div>
+                            <div class="contradiction-claim">${escapeHtml(c.claim_a)}</div>
+                            <div class="contradiction-quote">"${escapeHtml(c.chunk_a)}"</div>
+                        </div>
+                        <div class="contradiction-vs">VS</div>
+                        <div class="contradiction-witness">
+                            <div class="contradiction-witness-name">${escapeHtml(c.witness_b)}</div>
+                            <div class="contradiction-claim">${escapeHtml(c.claim_b)}</div>
+                            <div class="contradiction-quote">"${escapeHtml(c.chunk_b)}"</div>
+                        </div>
+                    </div>
+                    <div class="contradiction-explanation">${escapeHtml(c.explanation)}</div>
+                </div>
+            `).join('');
+        }
+
+        function formatSource(type) {
+            const map = { us_inquiry: 'US Senate Inquiry', british_inquiry: 'British Inquiry', other: 'Other' };
+            return map[type] || type;
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
     </script>
 </body>
 </html>

@@ -248,17 +248,19 @@ class TestSemanticSearchEngine:
     
     def test_get_related_contradictions(self, search_engine, mock_vector_store, real_ismay_search_results):
         mock_vector_store.query.return_value = real_ismay_search_results
-        
+
+        # Inject a fake detector so the test never hits the Anthropic API.
+        fake_detector = Mock()
+        fake_detector.detect.return_value = []
+        search_engine._contradiction_detector = fake_detector
+
         query = SearchQuery(text="men in lifeboats")
         contradictions = search_engine.get_related_contradictions(query)
-        
+
         assert isinstance(contradictions, list)
-        if len(contradictions) > 0:
-            for contradiction in contradictions:
-                assert "conflicting_statements" in contradiction
-                assert "topic" in contradiction
-                assert "confidence_score" in contradiction
-    
+        assert contradictions == []
+        fake_detector.detect.assert_called_once()
+
     def test_search_with_date_range_filter(self, search_engine, mock_vector_store, real_ismay_search_results):
         mock_vector_store.query.return_value = real_ismay_search_results
         
