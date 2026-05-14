@@ -1,11 +1,14 @@
 import logging
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 from Services.semantic_search import SemanticSearchEngine, SearchQuery
@@ -19,7 +22,17 @@ load_dotenv()
 # Log exceptions server-side; never include raw error strings in HTTP responses.
 logger = logging.getLogger(__name__)
 
+# Per-IP rate limiter. App Runner sits in front of the app, so the real
+# client IP arrives via X-Forwarded-For — uvicorn must run with
+# --proxy-headers --forwarded-allow-ips='*' for get_remote_address to see it.
+# Limits are tunable via env (defaults set for portfolio traffic).
+_SEARCH_RATE = os.getenv("RATE_LIMIT_SEARCH", "30/minute")
+_CONTRADICTIONS_RATE = os.getenv("RATE_LIMIT_CONTRADICTIONS", "10/minute")
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(title="Titanic Historical RAG", description="Search Titanic witness testimonies")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS: comma-separated list in ALLOWED_ORIGINS, defaults to localhost only.
 # Set ALLOWED_ORIGINS=* in dev if you really want wildcard.
@@ -107,29 +120,26 @@ async def health_check():
 
 
 @app.post("/search", response_model=SearchResponse)
-async def search_documents(request: SearchRequest):
+@limiter.limit(_SEARCH_RATE)
+async def search_documents(request: Request, payload: SearchRequest):
     """Search historical documents."""
     try:
-        # Build filters
         filters = {}
-        if request.witness_name:
-            filters["witness_name"] = request.witness_name
-        if request.source_type:
-            filters["source_type"] = request.source_type
+        if payload.witness_name:
+            filters["witness_name"] = payload.witness_name
+        if payload.source_type:
+            filters["source_type"] = payload.source_type
 
-        # Create search query
         search_query = SearchQuery(
-            text=request.query,
-            top_k=request.top_k,
+            text=payload.query,
+            top_k=payload.top_k,
             filters=filters,
-            similarity_threshold=request.similarity_threshold
+            similarity_threshold=payload.similarity_threshold
         )
 
-        # Get search engine and perform search
         engine = get_search_engine()
         results = engine.search(search_query)
 
-        # Format results for frontend
         formatted_results = []
         for result in results:
             formatted_results.append({
@@ -143,7 +153,7 @@ async def search_documents(request: SearchRequest):
             })
 
         return SearchResponse(
-            query=request.query,
+            query=payload.query,
             results=formatted_results,
             total_results=len(formatted_results)
         )
@@ -156,29 +166,30 @@ async def search_documents(request: SearchRequest):
 
 
 @app.post("/search/contradictions", response_model=ContradictionSearchResponse)
-async def search_contradictions(request: ContradictionSearchRequest):
+@limiter.limit(_CONTRADICTIONS_RATE)
+async def search_contradictions(request: Request, payload: ContradictionSearchRequest):
     """Find contradictory statements across witnesses for a query."""
     try:
         filters = {}
-        if request.witness_name:
-            filters["witness_name"] = request.witness_name
-        if request.source_type:
-            filters["source_type"] = request.source_type
+        if payload.witness_name:
+            filters["witness_name"] = payload.witness_name
+        if payload.source_type:
+            filters["source_type"] = payload.source_type
 
         search_query = SearchQuery(
-            text=request.query,
-            top_k=request.top_k,
+            text=payload.query,
+            top_k=payload.top_k,
             filters=filters,
-            similarity_threshold=request.similarity_threshold,
+            similarity_threshold=payload.similarity_threshold,
         )
 
         engine = get_search_engine()
         contradictions = engine.get_related_contradictions(
-            search_query, min_confidence=request.min_confidence
+            search_query, min_confidence=payload.min_confidence
         )
 
         return ContradictionSearchResponse(
-            query=request.query,
+            query=payload.query,
             contradictions=contradictions,
             total_contradictions=len(contradictions),
         )
@@ -194,11 +205,16 @@ async def search_contradictions(request: ContradictionSearchRequest):
 async def get_documents():
     """Get available document metadata."""
     try:
+        from Services.british_witness_index import british_witness_index
         stats = vector_store.get_collection_stats()
+        unique = (
+            len(witness_index.get_unique_witnesses())
+            + len(british_witness_index.get_unique_witnesses())
+        )
         return {
             "total_chunks": stats.get("total_chunks", 0),
-            "unique_witnesses": 31,  # From our ingestion - 31 witnesses identified
-            "document_types": ["us_inquiry"],  # Currently only have US Senate Inquiry
+            "unique_witnesses": unique,
+            "document_types": ["us_inquiry", "british_inquiry"],
             "collection_info": {
                 "name": stats.get("index_name", "titanic-rag"),
                 "storage_type": "Pinecone",
@@ -219,7 +235,11 @@ async def get_witnesses(search: Optional[str] = None):
     not from the vector store — which doesn't enumerate metadata efficiently.
     """
     try:
-        names = sorted({w.name for w in witness_index.get_unique_witnesses()})
+        from Services.british_witness_index import british_witness_index
+        names = sorted(
+            {w.name for w in witness_index.get_unique_witnesses()}
+            | {w.name for w in british_witness_index.get_unique_witnesses()}
+        )
 
         if search and search.strip():
             q = search.strip().lower()

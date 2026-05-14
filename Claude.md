@@ -54,7 +54,7 @@ PDF  ─►  DocumentIngestion (pymupdf, per-page text)
 | `Services/vector_storage.py` | `PineconeVectorStore` (prod, cosine similarity, AWS serverless) |
 | `Services/semantic_search.py` | Search orchestration; `get_related_contradictions()` delegates to the detector |
 | `Services/contradiction_detector.py` | Claude Haiku 4.5 pairwise comparison, structured JSON output, cache-first |
-| `Services/contradiction_cache.py` | Pluggable cache: `SQLiteCache` (local) + `DynamoDBCache` stub for production |
+| `Services/contradiction_cache.py` | Pluggable cache: `SQLiteCache` (local) + `DynamoDBCache` (prod, boto3-backed, 90-day TTL, errors degrade silently to cache miss) |
 | `Services/pinecone_upload.py` | Ingestion CLI: `--test`, `--full-ingest` (US), `--ingest-british`, `--stats` |
 
 ## Running things
@@ -113,11 +113,75 @@ and `Testing/Ingestion/ingest_full_usinq.py` have been deleted, so the suite
 runs cleanly in a fresh env (modulo any tests that require a live
 OpenAI/Pinecone connection, which will skip or error on missing credentials).
 
+## Deployment (AWS App Runner)
+
+The container, cache backend, and rate limiter are all production-ready. The
+remaining work is one-shot infra setup outside the codebase.
+
+### Build and test the image locally
+
+```bash
+docker build -t titanic-rag:latest .
+
+# Run with .env values mapped in
+docker run --rm -p 8000:8000 --env-file .env \
+    -e CACHE_BACKEND=sqlite \
+    titanic-rag:latest
+# → http://localhost:8000
+```
+
+### Required infra (one-time)
+
+1. **DynamoDB table** for the contradiction cache:
+   ```bash
+   aws dynamodb create-table \
+       --table-name titanic-rag-contradictions \
+       --attribute-definitions AttributeName=cache_key,AttributeType=S \
+       --key-schema AttributeName=cache_key,KeyType=HASH \
+       --billing-mode PAY_PER_REQUEST
+   aws dynamodb update-time-to-live \
+       --table-name titanic-rag-contradictions \
+       --time-to-live-specification "Enabled=true,AttributeName=expires_at"
+   ```
+2. **Secrets Manager** entries for `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+   `PINECONE_API_KEY` (see `apprunner.yaml` for the ARN slots to fill in).
+3. **ECR repo** + push the built image, OR set App Runner to source-from-GitHub.
+4. **App Runner service** pointed at the image. Uses `apprunner.yaml` for env
+   wiring; port 8000; healthcheck `/health`.
+5. **Instance role IAM** (App Runner attaches this to the running container):
+   - `dynamodb:GetItem`, `dynamodb:PutItem` on the cache table ARN
+   - `secretsmanager:GetSecretValue` on the three API-key secrets
+6. **Anthropic spend cap** in console (`https://console.anthropic.com/settings/billing`)
+   — set a monthly limit so a runaway loop can't drain the account.
+7. **Route 53 + ACM cert** for the custom domain → App Runner custom-domain
+   association.
+
+### Production env vars (set in apprunner.yaml or App Runner console)
+
+| Var | Required | Notes |
+|---|---|---|
+| `CACHE_BACKEND` | yes | `dynamodb` in prod, `sqlite` in dev |
+| `CONTRADICTION_CACHE_TABLE` | yes | DynamoDB table name |
+| `OPENAI_API_KEY` | yes | Secrets Manager reference |
+| `ANTHROPIC_API_KEY` | yes | Secrets Manager reference |
+| `PINECONE_API_KEY` | yes | Secrets Manager reference |
+| `PINECONE_INDEX_NAME` | no | Defaults to `titanic-rag` |
+| `ALLOWED_ORIGINS` | yes | Comma-separated list, e.g. `https://titanic.higuera.io` |
+| `RATE_LIMIT_SEARCH` | no | Defaults to `30/minute` |
+| `RATE_LIMIT_CONTRADICTIONS` | no | Defaults to `10/minute`; LLM-bound, more expensive |
+
+### Rate limiting
+
+`slowapi` rate-limits `/search` and `/search/contradictions` per-IP. App Runner
+sits in front of the container, so the real client IP arrives via
+`X-Forwarded-For` — the Dockerfile runs uvicorn with `--proxy-headers
+--forwarded-allow-ips '*'` so `get_remote_address` picks it up correctly.
+Limits are env-tunable (see table above).
+
 ## Known issues / what's next
 
 | Priority | Item |
 |---|---|
-| Medium | Phase 4 from the contradiction plan: `DynamoDBCache` impl, `slowapi` rate limit, Dockerfile + App Runner deploy |
 | Medium | Async/parallel pair calls in `ContradictionDetector` — O(N²) sequential Haiku calls can be `asyncio.gather`'d for 5–10× latency drop on multi-witness queries |
 | Medium | UI hint for cross-inquiry pairs: when contradiction detector returns (e.g.) "Charles Herbert Lightoller" vs "Charles Lightoller", surface a "same person, different inquiry" badge using `BRITISH_TO_US_CANONICAL` |
 | Low | Roles in `BritishWitnessIndex` are hand-curated for major witnesses; ~30 minor Board-of-Trade officials default to "Master Mariner" / "Engineer Surveyor" and may be imprecise |
@@ -132,6 +196,9 @@ OpenAI/Pinecone connection, which will skip or error on missing credentials).
 ├── CLAUDE.md                           # this file
 ├── README.md                           # public intro
 ├── CONTRADICTION_PLAN.md               # original killer-feature plan
+├── Dockerfile                          # multi-stage; non-root; uvicorn with --proxy-headers
+├── .dockerignore
+├── apprunner.yaml                      # App Runner deploy config (image-based)
 ├── Services/
 │   ├── document_ingestion.py
 │   ├── witness_index.py                # US Senate
@@ -141,7 +208,7 @@ OpenAI/Pinecone connection, which will skip or error on missing credentials).
 │   ├── vector_storage.py
 │   ├── semantic_search.py
 │   ├── contradiction_detector.py
-│   ├── contradiction_cache.py
+│   ├── contradiction_cache.py          # SQLiteCache (dev) / DynamoDBCache (prod)
 │   └── pinecone_upload.py              # ingestion CLI: --full-ingest, --ingest-british
 ├── Testing/                            # pytest layout
 │   ├── Chunking/  DocumentIngestion/  Embeddings/

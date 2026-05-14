@@ -1,0 +1,38 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Local env / IDE
+.env
+.env.*
+.venv
+venv
+env
+.idea
+.vscode
+*.swp
+
+# Build / test artifacts
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+*.egg-info
+build
+dist
+
+# Local data not needed at request time
+cache/
+Testing/
+Evals/
+Text/*.pdf
+*.md
+!README.md
+
+# Misc
+.DS_Store
+Thumbs.db
