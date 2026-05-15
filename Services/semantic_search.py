@@ -156,15 +156,32 @@ class SemanticSearchEngine:
         explanation += f"Witness: {chunk.witness_name} from {chunk.metadata.source_type}."
         return explanation
     
+    # Don't highlight stopwords — they appear so often they create wall-to-wall
+    # marks that visually merge into one big highlighted region, hiding the
+    # actually interesting matches.
+    _HIGHLIGHT_STOPWORDS = frozenset({
+        "the", "was", "and", "for", "you", "with", "that", "this", "are",
+        "his", "her", "had", "have", "has", "did", "any", "all", "but",
+        "not", "from", "they", "them", "their", "there", "what", "when",
+        "where", "who", "how", "why", "did", "your", "our", "one",
+    })
+
     def _highlight_terms(self, content: str, query_text: str) -> str:
-        """Highlight query terms in the content."""
-        query_words = query_text.lower().split()
+        """Highlight query terms in the content as **word** for the UI to
+        convert to <mark> tags. Uses word-boundary matching to avoid wrapping
+        substrings (no more `Bel**fast**` or `ra**the**r`)."""
+        query_words = [w for w in query_text.lower().split()
+                       if len(w) > 2 and w not in self._HIGHLIGHT_STOPWORDS]
         highlighted = content
+        seen = set()  # dedupe so duplicate query words don't double-wrap
 
         for word in query_words:
-            if len(word) > 2:  # only highlight meaningful words
-                pattern = re.compile(re.escape(word), re.IGNORECASE)
-                highlighted = pattern.sub(lambda m: f"**{m.group(0)}**", highlighted)
+            if word in seen:
+                continue
+            seen.add(word)
+            # \b...\b anchors prevent substring matches like "fast" in "Belfast".
+            pattern = re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE)
+            highlighted = pattern.sub(lambda m: f"**{m.group(0)}**", highlighted)
 
         return highlighted
     

@@ -274,6 +274,44 @@
             transform: none;
         }
 
+        /* --- Preset query chips --- */
+        .preset-chips {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin: 14px 0 6px;
+        }
+
+        .preset-chips-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-right: 4px;
+        }
+
+        .preset-chip {
+            background: rgba(79, 124, 255, 0.08);
+            border: 1px solid rgba(79, 124, 255, 0.25);
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 0.82rem;
+            padding: 6px 12px;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: all var(--transition);
+            white-space: nowrap;
+        }
+
+        .preset-chip:hover {
+            background: var(--accent-glow);
+            border-color: var(--accent);
+            color: var(--text-primary);
+        }
+
+        .preset-chip:active {
+            transform: scale(0.97);
+        }
+
         /* --- Filters --- */
         .filters-toggle {
             display: flex;
@@ -948,7 +986,7 @@
             <div class="container">
                 <div class="hero-eyebrow">Primary Source Research</div>
                 <h1>Search Titanic<br>Witness Testimonies</h1>
-                <p>Explore first-hand accounts from the 1912 US Senate Inquiry. Search across 30 witnesses and hundreds of testimony excerpts.</p>
+                <p>Search 40,000+ testimony chunks across 158 witnesses from both the 1912 US Senate and British Wreck Commissioner's inquiries. Toggle "Show contradictions only" to see where witnesses disagreed.</p>
             </div>
         </section>
 
@@ -962,6 +1000,15 @@
                             <input type="text" class="search-input" id="query" placeholder="Search testimonies... e.g. 'lifeboat loading', 'ice warnings'" required>
                         </div>
                         <button type="submit" class="search-btn" id="searchBtn">Search</button>
+                    </div>
+
+                    <div class="preset-chips" aria-label="Example queries">
+                        <span class="preset-chips-label">Try:</span>
+                        <button type="button" class="preset-chip" data-query="How fast was the Titanic traveling before the collision?">ship speed</button>
+                        <button type="button" class="preset-chip" data-query="How many people were in lifeboat number 6?">lifeboat 6 capacity</button>
+                        <button type="button" class="preset-chip" data-query="Did the Californian see rockets fired from the Titanic?">Californian rockets</button>
+                        <button type="button" class="preset-chip" data-query="Were women and children loaded first?">women and children first</button>
+                        <button type="button" class="preset-chip" data-query="Were ice warnings received by wireless?">ice warnings</button>
                     </div>
 
                     <button type="button" class="filters-toggle" id="filtersToggle">
@@ -1190,6 +1237,17 @@
         document.getElementById('searchForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             await performSearch();
+        });
+
+        document.querySelectorAll('.preset-chip').forEach((chip) => {
+            chip.addEventListener('click', () => {
+                const q = chip.dataset.query;
+                if (!q) return;
+                const input = document.getElementById('query');
+                input.value = q;
+                input.focus();
+                performSearch();
+            });
         });
 
         async function performSearch() {

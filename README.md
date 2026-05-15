@@ -1,15 +1,57 @@
 # Titanic Historical RAG
 
-A retrieval-augmented search engine over the 1912 Titanic inquiry transcripts that **surfaces contradictions between witnesses** instead of hiding them.
+A retrieval-augmented search engine over the 1912 Titanic inquiry transcripts that **surfaces contradictions between witnesses** instead of collapsing them into a single answer.
 
-Most RAG systems try to give you one answer. The witnesses in the Titanic inquiries gave conflicting accounts on almost everything — speed, lifeboat counts, ice warnings, who gave which order. This tool embraces that. Ask "How many people were in Ismay's lifeboat?" and you'll see Ismay's "about 45" set next to Officer Lowe's "only twelve", with a confidence-scored explanation of why the statements conflict.
+Standard RAG tries to give you "the truth." The Titanic witnesses gave conflicting accounts on almost everything — speed at the time of collision, lifeboat occupancy, who heard which order, whether the Californian saw rockets. Asking *"How fast was the ship?"* should not return one number. It should show you that Lightoller said 21.5 knots, Hitchins said 45 knots, and that those statements are inconsistent with each other.
+
+This system does that, with confidence-scored explanations.
 
 ## What it does
 
-- **Semantic search** across all witness testimony — 1,173 pages of US Senate Inquiry transcript, ~16,000 indexed chunks across 68 witnesses
-- **Side-by-side contradiction view** — toggle "Show contradictions only" and the system uses an LLM to pairwise-compare witness statements and surface only the factual conflicts
-- **Confidence scoring** — every flagged contradiction comes with a 0–1 confidence and a one-sentence explanation
-- **Filterable** — narrow by witness, source type (US Senate / British Inquiry), or minimum confidence
+- **Semantic search** across both 1912 inquiries — 1,173 pages of US Senate testimony and 2,253 pages of British Wreck Commissioner's testimony, ingested as **~40,000 chunks across 158 witnesses**
+- **Side-by-side contradiction view** — an LLM (Claude Haiku 4.5) pairwise-compares witness statements and surfaces only the factual conflicts
+- **Cross-inquiry comparison** — 13 witnesses testified in *both* inquiries. When their accounts disagree across the two proceedings, the system flags it as a self-contradiction
+- **Confidence scoring + explanation** for every flagged conflict
+- **Filterable** by witness, inquiry, and minimum confidence
+
+## Evaluated, not just shipped
+
+I ran a 30-query retrieval evaluation against a hand-curated gold set with labeled relevant witnesses. The headline numbers (full report: [`Evals/EVAL_RESULTS.md`](Evals/EVAL_RESULTS.md)):
+
+| Metric | Value |
+|---|---|
+| Hit Rate @ 5 | **70%** (21/30 queries surface ≥1 relevant witness in top 5) |
+| Mean Reciprocal Rank | **0.53** (first relevant hit is around rank 2 on average) |
+| Recall @ 5 / Recall @ 10 | 0.21 / 0.30 |
+| p50 latency (search) | 408 ms |
+
+The threshold sweep in the eval report shows why `similarity_threshold = 0.5` is the production default: at 0.7 (the FastAPI/RAG-tutorial default), 25/30 queries silently return zero results, because cosine similarities on short witness Q&A chunks cap around 0.77.
+
+The 9 queries that miss are interesting — abstract phrasings ("Were ice warnings received by wireless?"), topics with sparse coverage in the corpus ("Did the ship break in two?"), and questions where the relevant witness's name doesn't share vocabulary with their testimony. Those are written up honestly in the eval report rather than hidden.
+
+## Architecture
+
+```
+PDF  ─►  pymupdf extraction (per-page text)
+     ─►  Witness attribution  (US: WitnessIndex / British: BritishWitnessIndex + PDF→transcript page map)
+     ─►  IntelligentChunker(splitter=...)
+          ├── SenateBoundarySplitter   (Senator SMITH. / Mr. LOWE.)
+          └── BritishBoundarySplitter  (numbered Q&A: "190. Question? - Answer")
+     ─►  OpenAI text-embedding-3-large @ 1024d
+     ─►  Pinecone (cosine, AWS serverless, 40K vectors)
+              │
+              ▼
+       SemanticSearchEngine
+              │
+              ├──► /search                  (top-K chunks)
+              └──► /search/contradictions   (Claude Haiku 4.5 pairwise verdicts, cached)
+                       │
+                       └── SQLiteCache (dev) / DynamoDBCache (prod, 90-day TTL)
+```
+
+Two inquiries with **different transcript formats** required two separate parsers (a strategy-pattern refactor of the chunker) and two witness indices. The British transcript uses transcript-page numbers that don't align 1:1 with PDF pages, so the British index includes a `pdf_to_transcript` map built by scanning embedded `Page N` markers across all 2,253 PDF pages.
+
+Witness names are stored *per-inquiry, not canonicalized*. The contradiction detector excludes same-witness pairs, so if "Charles Herbert Lightoller" (US) were aliased to "Charles Lightoller" (UK), his US and British testimonies would collapse into one group and the cross-inquiry self-contradiction demo would silently break. This is a non-obvious gotcha documented in the engineering notes.
 
 ## Stack
 
@@ -17,98 +59,56 @@ Most RAG systems try to give you one answer. The witnesses in the Titanic inquir
 |---|---|
 | PDF extraction | pymupdf |
 | Embeddings | OpenAI `text-embedding-3-large` @ 1024d |
-| Vector store | Pinecone (serverless, AWS) |
-| Contradiction LLM | Claude Haiku 4.5 with structured JSON output |
-| API | FastAPI + uvicorn |
+| Vector store | Pinecone serverless (AWS, cosine) |
+| Contradiction LLM | Claude Haiku 4.5 with structured JSON output via `messages.parse` |
+| API | FastAPI + uvicorn + slowapi rate limiter |
+| Verdict cache | SQLite (dev) / DynamoDB with 90-day TTL (prod) |
 | Frontend | Single-page HTML/JS, no framework |
-| Verdict cache | SQLite (local), DynamoDB (planned for production) |
+| Deployment | Dockerfile (multi-stage, non-root, ~120MB) + AWS App Runner |
 
 ## Quick start
 
 ```bash
-# 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Set up .env in the project root (required keys)
-echo "OPENAI_API_KEY=sk-..."           >> .env
-echo "ANTHROPIC_API_KEY=sk-ant-..."    >> .env
-echo "PINECONE_API_KEY=pcsk_..."       >> .env
+cat > .env <<EOF
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+PINECONE_API_KEY=pcsk_...
+EOF
 
-# Optional (defaults shown):
-# echo "PINECONE_INDEX_NAME=titanic-rag"               >> .env
-# echo "PINECONE_ENVIRONMENT=us-east-1"                >> .env
-# echo "ALLOWED_ORIGINS=http://localhost:8000"         >> .env  # or "*" for wildcard
-# echo "CACHE_BACKEND=sqlite"                          >> .env  # "dynamodb" is a stub
-
-# 3. Verify Pinecone connectivity (creates the index on first run)
+# Verify Pinecone (creates the index on first run)
 python Services/pinecone_upload.py --test
 
-# 4. Ingest the corpus (~10-15 minutes, ~$0.10 in OpenAI embeddings)
+# Ingest the US Senate Inquiry — ~10-15 min, ~$0.10 in embeddings
 python Services/pinecone_upload.py --full-ingest
 
-# 5. Start the app
-python app.py
-# Then open http://localhost:8000
+# Ingest the British Inquiry — ~20 min, ~$0.20
+python Services/pinecone_upload.py --ingest-british
+
+# Run the app
+python app.py     # → http://localhost:8000
+
+# Run the test suite (89 tests, no network required for most)
+python -m pytest Testing/ -q
+
+# Run the retrieval evaluation (requires live Pinecone + OpenAI)
+python Evals/run_retrieval_eval.py
 ```
 
-## Using it
+## What I'd do next
 
-The single-page UI has a search box and a filters panel. Try queries like:
+- **Async pairwise calls** — the contradiction detector currently issues sequential Haiku calls. `asyncio.gather` on N witness pairs would cut latency 5–10× on multi-witness queries.
+- **Reranking ablation** — try a cross-encoder rerank step (BGE-reranker) and measure the delta on the gold set. Even a negative result is a useful interview story.
+- **Contradiction-detection eval** — manually label ~20 pairs as contradicts/doesn't/partial and report the detector's precision and recall, not just retrieval metrics.
+- **Cross-inquiry UI badge** — when a contradiction pair is the same person across inquiries, surface "same witness, different inquiry" using `BRITISH_TO_US_CANONICAL`.
+- **Expand the gold set** — 30 queries is indicative, not statistically tight. 200 would be a real benchmark.
 
-- *"how fast was the ship going"*
-- *"how many people were in Ismay's lifeboat"*
-- *"when did the band stop playing"*
-- *"ice warnings"*
+## Documentation
 
-Flip the **"Show contradictions only"** toggle and adjust the minimum confidence slider to surface only LLM-verified factual disagreements between witnesses. Each card shows witness A vs witness B, their specific claims, a confidence percentage, and a one-line explanation of why the statements conflict.
-
-## API endpoints
-
-| Method | Path | Body |
-|---|---|---|
-| `POST` | `/search` | `{ query, top_k, similarity_threshold, witness_name?, source_type? }` |
-| `POST` | `/search/contradictions` | Same shape + `min_confidence` (default 0.6) |
-| `GET` | `/witnesses?search=...` | Filter witness list |
-| `GET` | `/documents` | Index metadata |
-| `GET` | `/health` | Pinecone state + chunk count |
-
-`POST /search/contradictions` returns:
-```json
-{
-  "query": "how many people were in Ismay's lifeboat",
-  "total_contradictions": 1,
-  "contradictions": [
-    {
-      "witness_a": "Joseph Bruce Ismay",
-      "witness_b": "Harold Godfrey Lowe",
-      "claim_a": "Ismay's lifeboat had approximately forty-five people",
-      "claim_b": "Ismay's lifeboat (Boat C) had only twelve people",
-      "confidence": 0.95,
-      "explanation": "The two witnesses provide directly conflicting specific counts: forty-five versus twelve, which cannot both be true.",
-      "chunk_a": "...full source quote...",
-      "chunk_b": "...full source quote..."
-    }
-  ]
-}
-```
-
-## Source documents
-
-| File | Inquiry | Pages | Status |
-|---|---|---|---|
-| `Text/USInq.pdf` | US Senate, 1912 | 1,173 | Fully ingested |
-| `Text/British_Data.pdf` | British Board of Trade | 7 | Format sample only; full transcript pending |
-
-Long-term goal is to ingest the full British Inquiry (~2,200 pages, ~25,000 numbered Q&As) so the system can surface cross-inquiry contradictions — where the same witness testified differently in the two proceedings.
-
-## Roadmap
-
-- **Now** — Killer feature shipped end-to-end (search → LLM verdicts → side-by-side UI)
-- **Next** — Clean up legacy ChromaDB code, hook `/witnesses` to the canonical `WitnessIndex`
-- **Soon** — British Inquiry pipeline (speaker-tag parser, separate witness index, ingest the full corpus)
-- **Production** — DynamoDB-backed verdict cache, rate limiter on `/search/contradictions`, Dockerfile + AWS App Runner deploy, custom domain
-
-See [CONTRADICTION_PLAN.md](CONTRADICTION_PLAN.md) for the implementation plan that drove the killer feature. See [CLAUDE.md](CLAUDE.md) for engineering-side architecture and conventions.
+- [`CLAUDE.md`](CLAUDE.md) — engineering-side architecture, conventions, and gotchas
+- [`CONTRADICTION_PLAN.md`](CONTRADICTION_PLAN.md) — original plan for the killer feature
+- [`Evals/EVAL_RESULTS.md`](Evals/EVAL_RESULTS.md) — full retrieval evaluation report
 
 ## License
 

@@ -1,0 +1,158 @@
+{
+  "_schema": "Each entry: { query, topic, relevant_witnesses }. A search 'hits' a query when any chunk returned in top-K has witness_name matching any string in relevant_witnesses. Cross-inquiry names (e.g. both Charles Herbert Lightoller and Charles Lightoller) are listed together when the same person testified in both inquiries.",
+  "_count": 30,
+  "_corpus": "US Senate Inquiry (16,434 chunks) + British Wreck Commissioner's Inquiry (23,652 chunks), total 40,086 vectors in Pinecone (titanic-rag)",
+  "_built": "2026-05-14 — hand-curated from Titanic Inquiry primary sources",
+  "queries": [
+    {
+      "query": "What did the lookouts see before the iceberg?",
+      "topic": "iceberg sighting",
+      "relevant_witnesses": ["Frederick Fleet", "Reginald Lee", "Archie Jewell", "George Symons", "G. Symons", "George Hogg", "G. A. Hogg"]
+    },
+    {
+      "query": "How fast was the Titanic traveling before the collision?",
+      "topic": "ship speed",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Robert Hitchins", "J. Bruce Ismay", "Herbert John Pitman", "Herbert Pitman", "Charles Hendrickson", "Frederick Barrett"]
+    },
+    {
+      "query": "Were ice warnings received by wireless?",
+      "topic": "ice warnings",
+      "relevant_witnesses": ["Harold S. Bride", "Harold Bride", "Cyril Furmstone Evans", "Cyril Evans", "Harold Thomas Cottam", "Harold Cottam", "Stanley Adams", "John Durrant"]
+    },
+    {
+      "query": "How many people were in lifeboat number 6?",
+      "topic": "lifeboat 6 capacity",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Robert Hitchins", "Margaret Brown", "Helen W. Bishop"]
+    },
+    {
+      "query": "Did Bruce Ismay enter a lifeboat?",
+      "topic": "Ismay boarding lifeboat",
+      "relevant_witnesses": ["J. Bruce Ismay", "Charles Herbert Lightoller", "Charles Lightoller", "William Burke", "Harold Godfrey Lowe", "Harold Lowe"]
+    },
+    {
+      "query": "Were women and children loaded first?",
+      "topic": "women-and-children-first policy",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Harold Godfrey Lowe", "Harold Lowe", "Herbert John Pitman", "Herbert Pitman", "Joseph Groves Boxhall", "Joseph Boxhall", "Alfred Crawford"]
+    },
+    {
+      "query": "Did the Californian see rockets fired from the Titanic?",
+      "topic": "Californian rockets",
+      "relevant_witnesses": ["Stanley Lord", "Herbert Stone", "James Gibson", "George F. Stewart", "Ernest Gill", "Cyril Furmstone Evans", "Cyril Evans"]
+    },
+    {
+      "query": "What happened in the engine room and boiler rooms after the collision?",
+      "topic": "engine room post-collision",
+      "relevant_witnesses": ["Frederick Barrett", "Charles Hendrickson", "George Cavell", "Thomas Dillon", "Frederick Scott", "Thomas Ranger"]
+    },
+    {
+      "query": "What was the captain doing during the sinking?",
+      "topic": "Captain Smith actions",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Harold S. Bride", "Harold Bride", "Joseph Groves Boxhall", "Joseph Boxhall", "Robert Hitchins"]
+    },
+    {
+      "query": "How long did it take for the Carpathia to arrive?",
+      "topic": "Carpathia arrival",
+      "relevant_witnesses": ["Arthur Henry Rostron", "Arthur Rostron", "Harold Thomas Cottam", "Harold Cottam"]
+    },
+    {
+      "query": "Were the watertight compartments sealed?",
+      "topic": "watertight doors",
+      "relevant_witnesses": ["Edward Wilding", "Frederick Barrett", "Charles Hendrickson", "Thomas Dillon", "Joseph Wheat"]
+    },
+    {
+      "query": "Did anyone hear the band playing?",
+      "topic": "band playing",
+      "relevant_witnesses": ["Harold S. Bride", "Harold Bride", "Archibald Gracie", "Major Arthur G. Peuchen", "Alfred Crawford"]
+    },
+    {
+      "query": "How did the wireless operators behave during the disaster?",
+      "topic": "wireless operator behavior",
+      "relevant_witnesses": ["Harold S. Bride", "Harold Bride", "Harold Thomas Cottam", "Harold Cottam", "Guglielmo Marconi", "Cyril Furmstone Evans", "Cyril Evans"]
+    },
+    {
+      "query": "Was the Titanic's design adequate for lifeboat capacity?",
+      "topic": "lifeboat design / regulations",
+      "relevant_witnesses": ["Edward Wilding", "Alexander Carlisle", "Harold Sanderson", "Norman Hill", "William Archer", "Maurice Clarke", "Alfred Young"]
+    },
+    {
+      "query": "Did third-class passengers have access to the lifeboats?",
+      "topic": "third class access",
+      "relevant_witnesses": ["Daniel Buckley", "Olaus Abelseth", "Berk Pickard", "John E. Hart", "Albert Pearcey"]
+    },
+    {
+      "query": "How was Major Peuchen ordered into a lifeboat?",
+      "topic": "Peuchen boarding",
+      "relevant_witnesses": ["Major Arthur G. Peuchen", "Charles Herbert Lightoller", "Charles Lightoller"]
+    },
+    {
+      "query": "Who survived on collapsible boat B?",
+      "topic": "collapsible B survivors",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Harold S. Bride", "Harold Bride", "Archibald Gracie"]
+    },
+    {
+      "query": "What was the temperature of the water?",
+      "topic": "water temperature",
+      "relevant_witnesses": ["Harold S. Bride", "Harold Bride", "Charles Joughin", "Charles Herbert Lightoller", "Charles Lightoller"]
+    },
+    {
+      "query": "Were the lookouts provided with binoculars?",
+      "topic": "lookout binoculars",
+      "relevant_witnesses": ["Frederick Fleet", "Reginald Lee", "George Symons", "G. Symons", "Charles Herbert Lightoller", "Charles Lightoller", "Archie Jewell"]
+    },
+    {
+      "query": "How did Officer Lowe rescue people from the water?",
+      "topic": "Lowe water rescue",
+      "relevant_witnesses": ["Harold Godfrey Lowe", "Harold Lowe", "Edward John Buley", "Frank Oliver Evans"]
+    },
+    {
+      "query": "Did the ship break in two before sinking?",
+      "topic": "ship break in two",
+      "relevant_witnesses": ["Charles Joughin", "Archibald Gracie", "Major Arthur G. Peuchen", "Harold S. Bride", "Harold Bride", "Frederick Fleet"]
+    },
+    {
+      "query": "What orders were given to fill the lifeboats?",
+      "topic": "lifeboat loading orders",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Harold Godfrey Lowe", "Harold Lowe", "Herbert John Pitman", "Herbert Pitman", "Joseph Groves Boxhall", "Joseph Boxhall", "Walter John Perkis"]
+    },
+    {
+      "query": "Did the Californian's captain understand what he was seeing?",
+      "topic": "Captain Lord judgment",
+      "relevant_witnesses": ["Stanley Lord", "Herbert Stone", "James Gibson", "George F. Stewart"]
+    },
+    {
+      "query": "What kind of inspection was done before the voyage?",
+      "topic": "Board of Trade inspection",
+      "relevant_witnesses": ["Maurice Clarke", "William Archer", "Alfred Young", "Alfred Chalmers", "Frank Carruthers", "Benjamin Steel"]
+    },
+    {
+      "query": "Where was the iceberg sighted from?",
+      "topic": "iceberg location",
+      "relevant_witnesses": ["Frederick Fleet", "Reginald Lee", "Joseph Groves Boxhall", "Joseph Boxhall", "Robert Hitchins"]
+    },
+    {
+      "query": "Were there any panics or rushes for the lifeboats?",
+      "topic": "panic during evacuation",
+      "relevant_witnesses": ["Charles Herbert Lightoller", "Charles Lightoller", "Harold Godfrey Lowe", "Harold Lowe", "Major Arthur G. Peuchen", "J. Bruce Ismay", "John Hardy"]
+    },
+    {
+      "query": "Did the Olympic's captain receive distress signals?",
+      "topic": "Olympic and other ships",
+      "relevant_witnesses": ["Herbert James Haddock", "James Henry Moore", "James Moore"]
+    },
+    {
+      "query": "Were the Duff-Gordons accused of bribing the crew?",
+      "topic": "Duff-Gordon bribery accusation",
+      "relevant_witnesses": ["Cosmo Duff-Gordon", "Lady Duff-Gordon", "Charles Hendrickson", "Robert Pusey", "Samuel Collins"]
+    },
+    {
+      "query": "How many lifeboats did the Titanic actually carry?",
+      "topic": "lifeboat count regulations",
+      "relevant_witnesses": ["Alexander Carlisle", "Edward Wilding", "Harold Sanderson", "Alfred Young", "Maurice Clarke", "Norman Hill"]
+    },
+    {
+      "query": "What did Captain Rostron do to prepare for survivors?",
+      "topic": "Rostron preparation",
+      "relevant_witnesses": ["Arthur Henry Rostron", "Arthur Rostron", "Harold Thomas Cottam", "Harold Cottam"]
+    }
+  ]
+}
