@@ -48,8 +48,8 @@ run:
       value: 10/minute
   secrets:
     - name: OPENAI_API_KEY
-      value-from: arn:aws:secretsmanager:us-east-1:CHANGE_ME:secret:titanic-rag/openai
+      value-from: arn:aws:secretsmanager:us-east-1:814929013775:secret:titanic-rag/openai-6Saqtb
     - name: ANTHROPIC_API_KEY
-      value-from: arn:aws:secretsmanager:us-east-1:CHANGE_ME:secret:titanic-rag/anthropic
+      value-from: arn:aws:secretsmanager:us-east-1:814929013775:secret:titanic-rag/anthropic-M8y12r
     - name: PINECONE_API_KEY
-      value-from: arn:aws:secretsmanager:us-east-1:CHANGE_ME:secret:titanic-rag/pinecone
+      value-from: arn:aws:secretsmanager:us-east-1:814929013775:secret:titanic-rag/pinecone-MuMITN
