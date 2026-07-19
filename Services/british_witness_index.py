@@ -9,7 +9,6 @@ in get_witness_by_pdf_page(), which consumes a pre-built offset map.
 Mirrors the public API of WitnessIndex (US Senate) so consumers can be polymorphic.
 """
 
-import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -184,10 +183,13 @@ class BritishWitnessIndex:
         """
         if transcript_page < self.FIRST_WITNESS_PAGE or transcript_page > self.LAST_WITNESS_PAGE:
             return None
-        applicable = [w for w in self.witnesses if w.page <= transcript_page]
-        if not applicable:
-            return None
-        return max(applicable, key=lambda w: w.page)
+        # Latest applicable TOC entry wins; `>=` gives same-page ties to the
+        # later-listed witness (see WitnessIndex.get_witness_by_page_range).
+        best = None
+        for w in self.witnesses:
+            if w.page <= transcript_page and (best is None or w.page >= best.page):
+                best = w
+        return best
 
     def get_witness_by_pdf_page(self, pdf_page: int) -> Optional[Witness]:
         """Get the witness for a PDF page, via the transcript-page mapping."""
@@ -227,8 +229,12 @@ class BritishWitnessIndex:
 
 
 # Maps British-TOC names → US-canonical names for witnesses who testified in
-# BOTH inquiries. After this remap, cross-inquiry chunks share `witness_name`
-# in Pinecone, so the contradiction detector pairs them without extra plumbing.
+# BOTH inquiries under different name strings. Used for the "same person"
+# hint at display time; NOT applied at ingest (per-inquiry names are what let
+# the contradiction detector pair a witness against their own other-inquiry
+# testimony). Witnesses whose names match exactly across inquiries (Ismay,
+# Stanley Lord, Fleet, Barrett, Gill, Crawford, Ernest Archer) need no entry —
+# name equality plus differing source_type already identifies them.
 BRITISH_TO_US_CANONICAL: Dict[str, str] = {
     "Charles Lightoller": "Charles Herbert Lightoller",
     "Herbert Pitman": "Herbert John Pitman",
@@ -239,6 +245,12 @@ BRITISH_TO_US_CANONICAL: Dict[str, str] = {
     "George Hogg": "G. A. Hogg",
     "Arthur Rostron": "Arthur Henry Rostron",
     "Harold Cottam": "Harold Thomas Cottam",
+    "Robert Hitchins": "Robert Hichens",       # spelling drift between TOCs
+    "George Rowe": "George Thomas Rowe",
+    "Edward Buley": "Edward John Buley",
+    "Samuel Hemmings": "Samuel S. Hemming",
+    "James Moore": "James Henry Moore",
+    "Cyril Evans": "Cyril Furmstone Evans",
 }
 
 
@@ -248,43 +260,14 @@ def canonical_witness_name(british_name: str) -> str:
     return BRITISH_TO_US_CANONICAL.get(british_name, british_name)
 
 
-_PAGE_MARKER = re.compile(r"^\s*Page\s+(\d+)\s*$", re.MULTILINE)
-
-
 def build_pdf_to_transcript_map(pdf_path: str) -> Dict[int, int]:
-    """Scan a British Inquiry PDF for `Page N` markers and build a
-    pdf_page (1-indexed) -> transcript_page mapping.
-
-    Pages without an explicit marker inherit the last-seen transcript page
-    (carry-forward). Pages before the first marker map to None and are
-    omitted from the dict.
-
-    The PDF has ~2.5 PDF pages per transcript page in the witness sections,
-    so most PDF pages will be filled by carry-forward, not by an explicit
-    marker.
+    """Build a pdf_page (1-indexed) → transcript_page mapping for a British
+    Inquiry PDF. Thin wrapper over Services.page_map.build_page_map, which
+    adds marker noise-filtering (monotonicity, plausibility, TOC pages).
     """
-    import fitz
+    from Services.page_map import build_page_map
 
-    pdf = fitz.open(pdf_path)
-    mapping: Dict[int, int] = {}
-    current_transcript: Optional[int] = None
-
-    try:
-        for i in range(pdf.page_count):
-            pdf_page = i + 1
-            text = pdf[i].get_text()
-            matches = _PAGE_MARKER.findall(text)
-            if matches:
-                # Take the highest marker on this page (transcript pages are
-                # monotonic; a page may show the leftover footer of one page
-                # and the header of the next).
-                current_transcript = max(int(m) for m in matches)
-            if current_transcript is not None:
-                mapping[pdf_page] = current_transcript
-    finally:
-        pdf.close()
-
-    return mapping
+    return build_page_map(pdf_path)
 
 
 british_witness_index = BritishWitnessIndex()

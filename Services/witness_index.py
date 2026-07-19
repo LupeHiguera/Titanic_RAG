@@ -57,8 +57,20 @@ class Witness:
 
 
 class WitnessIndex:
-    """Manages the complete witness index from US Senate Inquiry."""
-    
+    """Manages the complete witness index from US Senate Inquiry.
+
+    Page lookups expect **printed** inquiry pages (as embedded in the PDF's
+    `Page N` markers), not raw PDF page numbers — the two drift apart by
+    4-10 pages through the document. Use Services.page_map.build_page_map
+    to translate PDF pages before calling get_witness_by_page_range.
+    """
+
+    # Printed-page bounds of live witness testimony. Page 1 is the session
+    # opening; pages after 1142 are affidavits, letters, and the digest of
+    # testimony, which must not be attributed to the last witness (Barrett).
+    FIRST_WITNESS_PAGE = 2
+    LAST_WITNESS_PAGE = 1142
+
     def __init__(self):
         self.witnesses = self._load_witness_index()
         self.recalled_witnesses = self._identify_recalled_witnesses()
@@ -188,14 +200,23 @@ class WitnessIndex:
         return None
     
     def get_witness_by_page_range(self, page_number: int) -> Optional[Witness]:
-        """Get witness for a page number within their testimony range."""
-        # Find the witness whose testimony this page belongs to
-        applicable_witnesses = [w for w in self.witnesses if w.page <= page_number]
-        if not applicable_witnesses:
+        """Get witness for a printed page number within their testimony range.
+
+        Returns None outside [FIRST_WITNESS_PAGE, LAST_WITNESS_PAGE] — the
+        opening session text and the appendices are not witness testimony.
+        """
+        if not (self.FIRST_WITNESS_PAGE <= page_number <= self.LAST_WITNESS_PAGE):
             return None
-        
-        # Return the witness with the highest page number <= the target page
-        return max(applicable_witnesses, key=lambda w: w.page)
+        # Latest applicable TOC entry wins. `>=` (not `>`) means that when two
+        # witnesses start on the same page, the one listed later — the one
+        # whose testimony continues onto the following pages — takes the tie.
+        # (max() with a key would return the FIRST tie, silently attributing
+        # e.g. all of Widgery's testimony to Hardy.)
+        best = None
+        for w in self.witnesses:
+            if w.page <= page_number and (best is None or w.page >= best.page):
+                best = w
+        return best
     
     def get_witnesses_by_ship(self, ship: str) -> List[Witness]:
         """Get all witnesses affiliated with a specific ship."""

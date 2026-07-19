@@ -8,25 +8,29 @@ A RAG system over Titanic inquiry transcripts that **surfaces contradictions bet
 
 ## Current state
 
-- US Senate Inquiry (1,173 pages, `Text/USInq.pdf`) fully ingested into Pinecone — ~16K chunks across 68 real witnesses
-- British Wreck Commissioner's Inquiry (2,253 pages, `Text/BritishInquiry.pdf`) ingested — **~23.6K chunks across 90 witnesses** (incl. Lightoller @ 1,732 chunks, Ismay @ 976, Stanley Lord @ 729)
-- Pinecone index `titanic-rag` now holds ~40K chunks total — both inquiries co-located, distinguished by `metadata.source_type` ("us_inquiry" / "british_inquiry")
-- Cross-inquiry witnesses (13 confirmed: Lightoller, Pitman, Boxhall, Lowe, Bride, Fleet, Ismay, Rostron, Lord, Marconi, Symons, Hogg, Cottam) are stored under their per-inquiry name strings — the contradiction detector pairs them naturally as "Charles Herbert Lightoller VS Charles Lightoller", which surfaces self-contradiction across inquiries as the killer demo
-- Contradiction detection wired end-to-end via Claude Haiku 4.5
-- FastAPI app on port 8000 with `/search` and `/search/contradictions` endpoints
-- Single-page UI with a "Show contradictions only" toggle and side-by-side card layout
+- US Senate Inquiry (1,173 pages, `Text/USInq.pdf`) fully ingested into Pinecone — ~4.4K packed chunks (mean ~710 chars) across **all 70** indexed witnesses
+- British Wreck Commissioner's Inquiry (2,253 pages, `Text/BritishInquiry.pdf`) ingested — ~7.2K packed chunks across **all 97** indexed witnesses
+- Pinecone index `titanic-rag` holds ~11.6K chunks total — both inquiries co-located, distinguished by `metadata.source_type` ("us_inquiry" / "british_inquiry"); IDs are deterministic (`us:`/`br:` prefix + content hash) so re-ingest upserts instead of duplicating
+- Every chunk cites the **printed inquiry page it actually came from** (page tags carried through chunking), plus `role`, `ship`, `witness_type` metadata
+- Cross-inquiry witnesses are stored under their per-inquiry name strings; the contradiction detector groups by **(witness_name, source_type)**, so both differently-named (Lightoller) and same-named (Ismay, Stanley Lord, Fleet) witnesses get compared against their own other-inquiry testimony — `same_person: true` in the response drives the UI badge
+- Contradiction detection wired end-to-end via Claude Haiku 4.5, pair checks parallelized on a thread pool (max 45 pairs/query)
+- FastAPI app on port 8000 with `/search` and `/search/contradictions` endpoints (sync handlers → threadpool; the event loop is never blocked)
+- Single-page UI: side-by-side contradiction cards with per-side role + inquiry + page citations and a gold "same person — both inquiries" badge
 
 ## Architecture
 
 ```
 PDF  ─►  DocumentIngestion (pymupdf, per-page text)
-     ─►  Witness attribution (US: WitnessIndex / British: BritishWitnessIndex
-          + PDF→transcript-page map)                     ← canonical attribution
+     ─►  page_map.build_page_map (PDF page → printed page, noise-filtered)
+     ─►  build_witness_contexts (session splitting at caps-surname headings;
+          US: WitnessIndex / British: BritishWitnessIndex ← canonical attribution;
+          ⟦p:N⟧ page tags embedded where the printed page changes)
      ─►  IntelligentChunker(splitter=...)
           ├── SenateBoundarySplitter   (Senator SMITH. / Mr. LOWE.)
-          └── BritishBoundarySplitter  (numbered Q&A: "190. Question? - Answer")
+          ├── BritishBoundarySplitter  (numbered Q&A: "190. Question? - Answer")
+          └── packs adjacent Q&As up to chunk_size; assigns per-chunk pages
      ─►  EmbeddingService (OpenAI text-embedding-3-large @ 1024d)
-     ─►  PineconeVectorStore (cosine, AWS serverless)
+     ─►  PineconeVectorStore (cosine, AWS serverless, deterministic us:/br: IDs)
                 │
                 ▼
        SemanticSearchEngine.search()
@@ -35,9 +39,10 @@ PDF  ─►  DocumentIngestion (pymupdf, per-page text)
                 │
                 └──► ContradictionDetector    (Claude Haiku 4.5)
                           │
-                          ├── pair witnesses across results
+                          ├── group by (witness, inquiry); over-fetched results
+                          ├── pair checks on a thread pool (≤45 pairs)
                           ├── ContradictionCache.get_or_compute()
-                          │     └── SQLiteCache (local) / DynamoDBCache (stub)
+                          │     └── SQLiteCache (local) / DynamoDBCache (prod)
                           ▼
                      /search/contradictions   (filtered by min_confidence)
 ```
@@ -46,16 +51,17 @@ PDF  ─►  DocumentIngestion (pymupdf, per-page text)
 
 | File | Role |
 |---|---|
-| `Services/document_ingestion.py` | PDF text extraction via pymupdf, per-page or full-doc |
-| `Services/witness_index.py` | US Senate witness attribution by page number (98 entries, 68 unique witnesses) |
-| `Services/british_witness_index.py` | British Inquiry witness attribution (121 entries, 97 unique) keyed on **transcript pages**, plus `build_pdf_to_transcript_map()` helper and `BRITISH_TO_US_CANONICAL` alias map (informational; not applied at ingest) |
-| `Services/chunking.py` | `IntelligentChunker` + `BoundarySplitter` strategy. Default `SenateBoundarySplitter` matches `Senator SMITH.` / `Mr. LOWE.`; `BritishBoundarySplitter` splits on numbered Q&A (`190.`), strips embedded `Page N` markers |
+| `Services/document_ingestion.py` | PDF text extraction via pymupdf, per-page or full-doc; `clean_extracted_text()` |
+| `Services/page_map.py` | Shared PDF-page → printed-page mapper for both inquiries; filters TOC/reference `Page N` marker noise (monotonicity, plausibility, marker-count rules) |
+| `Services/witness_index.py` | US Senate witness attribution by **printed** page (98 entries, 70 unique witnesses); bounds `[2, 1142]` exclude front matter/appendices |
+| `Services/british_witness_index.py` | British Inquiry witness attribution (121 entries, 97 unique) keyed on **transcript pages**, plus `BRITISH_TO_US_CANONICAL` alias map (15 entries; display-layer `same_person` hint, not applied at ingest) |
+| `Services/chunking.py` | `IntelligentChunker` + `BoundarySplitter` strategy. Splits on Q&A boundaries, packs adjacent Q&As up to `chunk_size` (800), resolves per-chunk pages from `⟦p:N⟧` tags. `SenateBoundarySplitter` matches `Senator SMITH.` / `Mr. LOWE.`; `BritishBoundarySplitter` splits on numbered Q&A (`190.`) |
 | `Services/embeddings.py` | OpenAI embeddings, 1024-dim, with in-memory cache |
-| `Services/vector_storage.py` | `PineconeVectorStore` (prod, cosine similarity, AWS serverless) |
-| `Services/semantic_search.py` | Search orchestration; `get_related_contradictions()` delegates to the detector |
-| `Services/contradiction_detector.py` | Claude Haiku 4.5 pairwise comparison, structured JSON output, cache-first |
-| `Services/contradiction_cache.py` | Pluggable cache: `SQLiteCache` (local) + `DynamoDBCache` (prod, boto3-backed, 90-day TTL, errors degrade silently to cache miss) |
-| `Services/pinecone_upload.py` | Ingestion CLI: `--test`, `--full-ingest` (US), `--ingest-british`, `--stats` |
+| `Services/vector_storage.py` | `PineconeVectorStore` (cosine, AWS serverless); deterministic `us:`/`br:` IDs, `delete_by_prefix()`, `delete_all()` |
+| `Services/semantic_search.py` | Search orchestration; `get_related_contradictions()` over-fetches for witness diversity, supports "contradictions involving witness X" filter mode |
+| `Services/contradiction_detector.py` | Claude Haiku 4.5 pairwise comparison on a thread pool, structured JSON output, cache-first, groups by (witness, inquiry) |
+| `Services/contradiction_cache.py` | Pluggable cache: `SQLiteCache` (local, lock-guarded) + `DynamoDBCache` (prod, boto3-backed, 90-day TTL, errors degrade silently to cache miss) |
+| `Services/pinecone_upload.py` | Ingestion CLI: `--test`, `--full-ingest` (US), `--ingest-british`, `--stats`, `--clear-all`, `--clear-source {us,british}`; `build_witness_contexts()` is the session builder (also used by `Evals/attribution_check.py`) |
 
 ## Running things
 
@@ -72,46 +78,65 @@ pip install -r requirements.txt
 # Verify Pinecone connection
 python Services/pinecone_upload.py --test
 
-# US re-ingestion (if index is empty/stale) — ~10-15 min, ~$0.10 in OpenAI
-python Services/pinecone_upload.py --full-ingest
+# Full rebuild (deterministic IDs make ingest idempotent, but --clear-all
+# also removes legacy UUID-id vectors) — ~30-45 min, ~$0.30 in OpenAI total
+python Services/pinecone_upload.py --clear-all --full-ingest --ingest-british
 
-# British re-ingestion — ~20 min, ~$0.20 in OpenAI, ~23.6K chunks
-python Services/pinecone_upload.py --ingest-british
+# Individual inquiries / partial clears
+python Services/pinecone_upload.py --full-ingest          # US only
+python Services/pinecone_upload.py --ingest-british       # British only
+python Services/pinecone_upload.py --clear-source british # delete br:* vectors
+
+# Attribution coverage check (offline, no API keys) — run after touching
+# witness indexes, page mapping, or session splitting
+python Evals/attribution_check.py
 
 # Run the app
 python app.py        # → http://localhost:8000
 
 # Run tests
-python -m pytest Testing/Search Testing/Chunking Testing/Witnesses -q
+python -m pytest Testing/ -q
 ```
 
 ## API
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/search` | POST | Standard semantic search, returns top-K chunks |
-| `/search/contradictions` | POST | Same shape + `min_confidence` (default 0.6); returns LLM-verified contradictions |
-| `/witnesses` | GET | Witness filter list derived from `WitnessIndex` (70 names, optional `?search=` substring) |
+| `/search` | POST | Standard semantic search, returns top-K chunks (incl. `role`, `ship`, citable `page_number`) |
+| `/search/contradictions` | POST | Same shape + `min_confidence` (default 0.6); returns LLM-verified contradictions with per-side `source`/`page`/`role` citations and `same_person`. Over-fetches internally for witness diversity; a `witness_name` filter means "contradictions *involving* this witness" |
+| `/witnesses` | GET | Witness filter list from both indexes (optional `?search=` substring) |
 | `/health` | GET | Vector store + chunk count |
-| `/documents` | GET | Index metadata |
+| `/documents` | GET | Index metadata (witness count deduped across inquiries via canonical map) |
+
+Request validation: `query` ≤500 chars, `top_k` 1–25, thresholds 0–1,
+`source_type` must be `us_inquiry`/`british_inquiry`. 429s return a
+`detail` message the UI shows verbatim.
 
 ## Conventions and gotchas
 
 - **WitnessIndex / BritishWitnessIndex are the only correct attribution paths.** Any code doing regex-based witness extraction from body text is wrong and predates the refactor. Pick the right index for the inquiry.
+- **BOTH inquiries need the PDF→printed page map.** The witness indexes are keyed on **printed** inquiry pages, and PDF pages drift from them in *both* documents (US: +4 to +10 pages; British: ~2.5 PDF pages per transcript page). `Services/page_map.build_page_map()` builds the mapping from embedded `Page N` markers with noise filtering — never feed raw PDF page numbers to `get_witness_by_page_range`. Lookups outside each index's `[FIRST_WITNESS_PAGE, LAST_WITNESS_PAGE]` (US: 2–1142, British: 17–748) return None — opening statements, affidavits, and the digest are intentionally unattributed.
+- **Same-page witness handoffs are split at caps-surname headings.** `build_witness_contexts()` starts each session at the witness's heading (`TESTIMONY OF JAMES WIDGERY` / `FREDERICK SHEATH, Sworn.`) so two witnesses sharing a printed page both keep their testimony. If a heading isn't found, the session falls back to the top of the following page. Same-page tie-breaks in `get_witness_by_page_range` give the page to the *later* TOC entry.
 - **Inquiry formats differ.** US Senate: `Senator SMITH.` / `Mr. LOWE.` speaker turns → `SenateBoundarySplitter`. British: numbered Q&A like `190. Question? - Answer` → `BritishBoundarySplitter`. The dispatcher is `IntelligentChunker(splitter=...)`.
-- **British PDF page ≠ transcript page.** The British TOC and witness index are keyed on **transcript pages**; PDF pages run ~2.5× faster. Use `build_pdf_to_transcript_map()` to scan the PDF for `Page N` markers, then `BritishWitnessIndex(pdf_to_transcript=map).get_witness_by_pdf_page(pdf_page)` for attribution. Lookups outside `[FIRST_WITNESS_PAGE, LAST_WITNESS_PAGE]` (17, 748) return None — opening statements and closing arguments are intentionally unattributed.
-- **Witness names are stored per-inquiry, not canonicalized.** US has `Charles Herbert Lightoller`, British has `Charles Lightoller`. They are deliberately NOT aliased at ingest time — the contradiction detector excludes same-witness pairs, so if we collapsed both into one name the cross-inquiry self-contradiction demo would silently break. `BRITISH_TO_US_CANONICAL` exists in `british_witness_index.py` for future display-layer hints ("note: same person") but is not applied at ingest.
-- **Stale-data marker**: witness names in Pinecone should be proper case (e.g. `Charles Herbert Lightoller`). ALL-CAPS or sentence-fragment names = pre-refactor ingestion artifacts.
-- **Chunking strategy is Q&A-bound, not size-bound.** US: ~16K chunks avg ~200 chars. British: ~23.6K chunks avg ~140 chars (Q&As are shorter and more numerous in the British format).
+- **`page_number` in chunk metadata is the citable printed/transcript page** of the text the chunk starts on — not a PDF page, and not the session's first page. Page identity travels through cleaning/chunking as `⟦p:N⟧` tags (see `chunking.PAGE_TAG`), which are stripped before storage.
+- **Witness names are stored per-inquiry, not canonicalized.** US has `Charles Herbert Lightoller`, British has `Charles Lightoller`. The contradiction detector groups by **(witness_name, source_type)**, so cross-inquiry self-comparison works for BOTH differently-named and identically-named (Ismay, Lord, Fleet, Barrett, Gill, Crawford, Archer) witnesses. `BRITISH_TO_US_CANONICAL` (15 entries, incl. spelling drift like Hitchins→Hichens) powers the `same_person` flag at display time and is not applied at ingest.
+- **Chunks are Q&A-bound AND size-packed.** Splitters cut on Q&A boundaries; the chunker then packs adjacent whole Q&As up to `chunk_size=800`. Result: ~4.4K US + ~7.2K British chunks, mean ~710 chars. A one-Q&A-per-chunk index (~40K tiny chunks) is pre-overhaul data.
+- **Chunk IDs are deterministic**: `us:`/`br:` prefix + sha256 of witness|page|index|content. Re-running ingest upserts in place; `--clear-source us|british` deletes by prefix; `--clear-all` also removes legacy UUID-id vectors.
 - **Pinecone region defaults to `us-east-1`** (AWS), matching the AWS serverless spec the code creates. Override via `PINECONE_ENVIRONMENT`. Do NOT pass a GCP-style region — index create will 400.
 - **`messages.parse()` requires `anthropic>=0.95`** (we pin `>=0.100`). Older versions silently lack the method and return AttributeError at runtime.
+- **Keep FastAPI search endpoints sync (`def`).** Everything they call (OpenAI, Pinecone, Anthropic) is blocking; `async def` would freeze the event loop — including `/health`, which App Runner uses for liveness.
 
 ## Test suite state
 
-Run `python -m pytest Testing/ --tb=no` for a snapshot. The legacy ChromaDB tests
-and `Testing/Ingestion/ingest_full_usinq.py` have been deleted, so the suite
-runs cleanly in a fresh env (modulo any tests that require a live
-OpenAI/Pinecone connection, which will skip or error on missing credentials).
+112 tests, all passing (`python -m pytest Testing/ -q`). Notable coverage:
+`Testing/Witnesses/test_attribution_fixes.py` (tie-breaks, bounds, page-map
+plausibility), `Testing/Chunking/test_page_tracking_and_packing.py` (⟦p:N⟧
+tags, packing, decimal-safe sentence splitting),
+`Testing/Contradictions/test_detector_grouping.py` ((witness, inquiry)
+grouping, same_person, failure tolerance). Tests requiring live
+OpenAI/Pinecone skip or error on missing credentials.
+`Evals/attribution_check.py` is the offline end-to-end attribution gate —
+it must report 70/70 US and 97/97 British witnesses covered.
 
 ## Deployment (AWS App Runner)
 
@@ -182,10 +207,10 @@ Limits are env-tunable (see table above).
 
 | Priority | Item |
 |---|---|
-| Medium | Async/parallel pair calls in `ContradictionDetector` — O(N²) sequential Haiku calls can be `asyncio.gather`'d for 5–10× latency drop on multi-witness queries |
-| Medium | UI hint for cross-inquiry pairs: when contradiction detector returns (e.g.) "Charles Herbert Lightoller" vs "Charles Lightoller", surface a "same person, different inquiry" badge using `BRITISH_TO_US_CANONICAL` |
+| Medium | Re-run `Evals/run_retrieval_eval.py` whenever chunking changes — the gold set's Hit Rate/MRR are sensitive to chunk size and the packed chunks (2026-07) changed the distribution |
+| Low | Session-heading fallback: if a witness's caps-surname heading isn't found on their start page, their session starts at the top of the next page (a few lines of the previous witness may bleed in) |
 | Low | Roles in `BritishWitnessIndex` are hand-curated for major witnesses; ~30 minor Board-of-Trade officials default to "Master Mariner" / "Engineer Surveyor" and may be imprecise |
-| Low | 2 `PytestReturnNotNoneWarning`s in `test_bold_artifacts.py` |
+| Low | 2 `PytestReturnNotNoneWarning`s (`test_bold_artifacts.py`, `test_real_embedding_with_pdf.py`) |
 
 ## File map (rough)
 
@@ -201,15 +226,16 @@ Limits are env-tunable (see table above).
 ├── apprunner.yaml                      # App Runner deploy config (image-based)
 ├── Services/
 │   ├── document_ingestion.py
-│   ├── witness_index.py                # US Senate
-│   ├── british_witness_index.py        # British Inquiry + PDF→transcript map + alias map
-│   ├── chunking.py                     # IntelligentChunker + Senate/British BoundarySplitters
+│   ├── page_map.py                     # PDF→printed page mapping (both inquiries)
+│   ├── witness_index.py                # US Senate (printed-page keyed)
+│   ├── british_witness_index.py        # British Inquiry + alias map
+│   ├── chunking.py                     # IntelligentChunker + splitters + page tags + packing
 │   ├── embeddings.py
-│   ├── vector_storage.py
+│   ├── vector_storage.py               # deterministic IDs, delete_by_prefix
 │   ├── semantic_search.py
-│   ├── contradiction_detector.py
+│   ├── contradiction_detector.py       # (witness, inquiry) groups, thread pool
 │   ├── contradiction_cache.py          # SQLiteCache (dev) / DynamoDBCache (prod)
-│   └── pinecone_upload.py              # ingestion CLI: --full-ingest, --ingest-british
+│   └── pinecone_upload.py              # ingestion CLI + build_witness_contexts
 ├── Testing/                            # pytest layout
 │   ├── Chunking/  DocumentIngestion/  Embeddings/
 │   ├── Ingestion/  Search/  Storage/  Witnesses/

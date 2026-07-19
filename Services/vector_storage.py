@@ -1,5 +1,5 @@
+import hashlib
 import numpy as np
-import uuid
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Optional
 import os
@@ -90,18 +90,30 @@ class PineconeVectorStore(VectorStore):
             print(f"Pinecone initialization failed: {e}")
             raise  # preserve original traceback
     
+    # Source-type ID prefixes: deterministic IDs make re-ingest an idempotent
+    # upsert (no duplicate vectors), and the prefix enables delete_by_prefix.
+    SOURCE_PREFIX = {"us_inquiry": "us", "british_inquiry": "br", "other": "ot"}
+
+    @classmethod
+    def deterministic_id(cls, embedded_chunk: EmbeddedChunk) -> str:
+        chunk = embedded_chunk.chunk
+        prefix = cls.SOURCE_PREFIX.get(chunk.metadata.source_type, "ot")
+        raw = (f"{chunk.witness_name}|{chunk.metadata.page_number}|"
+               f"{chunk.metadata.chunk_index}|{chunk.content}").encode("utf-8")
+        return f"{prefix}:{hashlib.sha256(raw).hexdigest()[:24]}"
+
     def store_chunks(self, embedded_chunks: List[EmbeddedChunk]) -> List[str]:
         """Store embedded chunks in Pinecone and return their IDs."""
         if not embedded_chunks:
             return []
-        
+
         vectors = []
         chunk_ids = []
-        
+
         for embedded_chunk in embedded_chunks:
-            chunk_id = str(uuid.uuid4())
+            chunk_id = self.deterministic_id(embedded_chunk)
             chunk_ids.append(chunk_id)
-            
+
             # Prepare metadata
             metadata = {
                 "witness_name": embedded_chunk.chunk.witness_name,
@@ -110,9 +122,12 @@ class PineconeVectorStore(VectorStore):
                 "page_number": embedded_chunk.chunk.metadata.page_number,
                 "chunk_index": embedded_chunk.chunk.metadata.chunk_index,
                 "total_chunks_for_witness": embedded_chunk.chunk.metadata.total_chunks_for_witness,
+                "role": embedded_chunk.chunk.metadata.role,
+                "ship": embedded_chunk.chunk.metadata.ship,
+                "witness_type": embedded_chunk.chunk.metadata.witness_type,
                 "content": embedded_chunk.chunk.content  # Store content in metadata
             }
-            
+
             vectors.append({
                 "id": chunk_id,
                 "values": embedded_chunk.embedding.tolist(),
@@ -151,14 +166,17 @@ class PineconeVectorStore(VectorStore):
         for match in response.matches:
             metadata_dict = match.metadata
             
-            # Reconstruct metadata
+            # Reconstruct metadata (.get for fields absent in older vectors)
             metadata = ChunkMetadata(
                 document_name=metadata_dict["document_name"],
                 source_type=metadata_dict["source_type"],
-                page_number=metadata_dict["page_number"],
+                page_number=int(metadata_dict["page_number"]),
                 credibility_score=0.0,  # Not using credibility scoring
                 chunk_index=metadata_dict["chunk_index"],
-                total_chunks_for_witness=metadata_dict["total_chunks_for_witness"]
+                total_chunks_for_witness=metadata_dict["total_chunks_for_witness"],
+                role=metadata_dict.get("role", ""),
+                ship=metadata_dict.get("ship", ""),
+                witness_type=metadata_dict.get("witness_type", ""),
             )
             
             # Reconstruct WitnessChunk
@@ -179,6 +197,21 @@ class PineconeVectorStore(VectorStore):
         """Delete chunks by their IDs. Raises on Pinecone errors."""
         self.index.delete(ids=chunk_ids)
         return True
+
+    def delete_by_prefix(self, prefix: str) -> int:
+        """Delete every vector whose ID starts with prefix (e.g. 'us:').
+        Returns the number of IDs deleted. Serverless indexes don't support
+        metadata-filtered deletes, so this is the supported bulk path."""
+        deleted = 0
+        for id_batch in self.index.list(prefix=prefix):
+            if id_batch:
+                self.index.delete(ids=list(id_batch))
+                deleted += len(id_batch)
+        return deleted
+
+    def delete_all(self) -> None:
+        """Delete every vector in the index."""
+        self.index.delete(delete_all=True)
 
     def get_collection_stats(self) -> Dict[str, Any]:
         """Get index statistics. Raises on Pinecone errors so /health surfaces real outages."""

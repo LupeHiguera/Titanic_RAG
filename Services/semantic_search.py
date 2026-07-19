@@ -124,12 +124,18 @@ class SemanticSearchEngine:
         
         return search_results
     
+    def _meaningful_query_words(self, text: str) -> set:
+        """Query words that carry signal — stopwords like 'the'/'was' would
+        otherwise inflate every overlap count and saturate scores at 1.0."""
+        return {w for w in text.lower().split()
+                if len(w) > 2 and w not in self._HIGHLIGHT_STOPWORDS}
+
     def _calculate_relevance_score(self, embedded_chunk: EmbeddedChunk,
                                   similarity_score: float, query: SearchQuery) -> float:
         """Calculate relevance score combining similarity and other factors."""
         relevance = similarity_score
 
-        query_words = set(query.text.lower().split())
+        query_words = self._meaningful_query_words(query.text)
         content_words = set(embedded_chunk.chunk.content.lower().split())
         keyword_overlap = len(query_words.intersection(content_words))
         if keyword_overlap > 0:
@@ -140,13 +146,13 @@ class SemanticSearchEngine:
                 relevance += 0.05
 
         return min(relevance, 1.0)
-    
+
     def _explain_relevance(self, query: SearchQuery, chunk: WitnessChunk,
                           similarity_score: float) -> str:
         """Generate explanation for why this result is relevant."""
         explanation = f"Similarity score: {similarity_score:.2f}. "
 
-        query_words = set(query.text.lower().split())
+        query_words = self._meaningful_query_words(query.text)
         content_words = set(chunk.content.lower().split())
         matching_words = query_words.intersection(content_words)
 
@@ -185,14 +191,44 @@ class SemanticSearchEngine:
 
         return highlighted
     
+    # Contradictions need witness *diversity*: the user's top_k (default 5)
+    # often yields chunks from only 1-2 witnesses — zero pairs to compare.
+    # Over-fetch, then let the detector take the best chunk per witness.
+    _CONTRADICTION_FETCH_MIN = 15
+
     def get_related_contradictions(self, query: SearchQuery,
                                    min_confidence: float = 0.6) -> List[Dict[str, Any]]:
         """Find contradictory statements across witnesses for the query.
 
         Delegates to ContradictionDetector for LLM-based pairwise comparison.
         Verdicts are cached, so repeat queries hit cache instead of the LLM.
+
+        A witness_name filter means "contradictions involving this witness":
+        their chunks are searched alongside an unfiltered pass (a filter that
+        pinned every chunk to one witness could never produce a pair).
         """
-        results = self.search(query)
+        witness_filter = query.filters.get("witness_name")
+        fetch_k = max(query.top_k * 3, self._CONTRADICTION_FETCH_MIN)
+
+        results = self.search(SearchQuery(
+            text=query.text, top_k=fetch_k, filters=dict(query.filters),
+            similarity_threshold=query.similarity_threshold,
+        ))
+        if witness_filter:
+            other_filters = {k: v for k, v in query.filters.items() if k != "witness_name"}
+            field_results = self.search(SearchQuery(
+                text=query.text, top_k=fetch_k, filters=other_filters,
+                similarity_threshold=query.similarity_threshold,
+            ))
+            seen = set()
+            merged = []
+            for r in results + field_results:
+                key = (r.chunk.chunk.witness_name, r.chunk.chunk.content)
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(r)
+            results = merged
+
         if not results:
             return []
 
@@ -202,6 +238,12 @@ class SemanticSearchEngine:
 
         chunks = [r.chunk for r in results]
         contradictions = self._contradiction_detector.detect(chunks, query.text)
+
+        if witness_filter:
+            contradictions = [
+                c for c in contradictions
+                if witness_filter in (c.witness_a, c.witness_b)
+            ]
 
         return [
             {
@@ -213,6 +255,13 @@ class SemanticSearchEngine:
                 "claim_b": c.claim_b,
                 "confidence": round(c.confidence, 3),
                 "explanation": c.explanation,
+                "source_a": c.source_a,
+                "source_b": c.source_b,
+                "page_a": c.page_a,
+                "page_b": c.page_b,
+                "role_a": c.role_a,
+                "role_b": c.role_b,
+                "same_person": c.same_person,
             }
             for c in contradictions
             if c.confidence >= min_confidence

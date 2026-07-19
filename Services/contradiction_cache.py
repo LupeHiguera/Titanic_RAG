@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -32,27 +33,33 @@ class SQLiteCache(ContradictionCache):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS contradictions ("
-            "  key TEXT PRIMARY KEY,"
-            "  value TEXT NOT NULL,"
-            "  created_at REAL NOT NULL DEFAULT (strftime('%s','now'))"
-            ")"
-        )
-        self._conn.commit()
+        # One connection shared across the detector's worker threads — sqlite3
+        # connections are not safe for concurrent use, so serialize access.
+        self._lock = threading.Lock()
+        with self._lock:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS contradictions ("
+                "  key TEXT PRIMARY KEY,"
+                "  value TEXT NOT NULL,"
+                "  created_at REAL NOT NULL DEFAULT (strftime('%s','now'))"
+                ")"
+            )
+            self._conn.commit()
 
     def get(self, key: str) -> Optional[dict]:
-        row = self._conn.execute(
-            "SELECT value FROM contradictions WHERE key = ?", (key,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM contradictions WHERE key = ?", (key,)
+            ).fetchone()
         return json.loads(row[0]) if row else None
 
     def put(self, key: str, value: dict) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO contradictions (key, value) VALUES (?, ?)",
-            (key, json.dumps(value)),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO contradictions (key, value) VALUES (?, ?)",
+                (key, json.dumps(value)),
+            )
+            self._conn.commit()
 
 
 class DynamoDBCache(ContradictionCache):

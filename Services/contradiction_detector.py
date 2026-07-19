@@ -1,22 +1,33 @@
 """LLM-based pairwise contradiction detection across witness testimonies.
 
-Given a set of search-result chunks for a query, group by witness, build
-cross-witness pairs, and ask Claude Haiku 4.5 whether each pair contradicts.
-Verdicts are cached via the pluggable ContradictionCache so repeat queries
-on the same witness pairs hit cache instead of the LLM.
+Given a set of search-result chunks for a query, group by (witness,
+inquiry), build cross-group pairs, and ask Claude Haiku 4.5 whether each
+pair contradicts. Grouping by (witness, inquiry) — not name alone — means a
+witness who testified in BOTH inquiries under the same name (Ismay, Stanley
+Lord, Fleet...) is compared against their own other-inquiry testimony, the
+same way differently-named cross-inquiry witnesses (Lightoller) always were.
+
+Pair checks run concurrently on a small thread pool; verdicts are cached via
+the pluggable ContradictionCache so repeat queries hit cache instead of the
+LLM.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import anthropic
 from pydantic import BaseModel, Field
 
+from Services.british_witness_index import canonical_witness_name
 from Services.contradiction_cache import ContradictionCache, make_cache
 from Services.embeddings import EmbeddedChunk
+
+logger = logging.getLogger(__name__)
 
 
 MODEL_ID = "claude-haiku-4-5"
@@ -52,6 +63,13 @@ class Contradiction:
     confidence: float
     explanation: str
     contradicts: bool = True
+    source_a: str = ""       # "us_inquiry" / "british_inquiry"
+    source_b: str = ""
+    page_a: int = 0          # printed/transcript page of the quoted chunk
+    page_b: int = 0
+    role_a: str = ""         # e.g. "2nd Officer, Titanic"
+    role_b: str = ""
+    same_person: bool = False  # same witness across the two inquiries
 
 
 def _chunk_id(chunk: EmbeddedChunk) -> str:
@@ -60,12 +78,27 @@ def _chunk_id(chunk: EmbeddedChunk) -> str:
     return hashlib.sha256(src).hexdigest()[:16]
 
 
+def _same_person(key_a: Tuple[str, str], key_b: Tuple[str, str]) -> bool:
+    """True when the two (name, source) groups are the same human testifying
+    in the two different inquiries — via exact name match or the
+    British→US canonical alias map."""
+    (name_a, source_a), (name_b, source_b) = key_a, key_b
+    if source_a == source_b:
+        return False
+    return canonical_witness_name(name_a) == canonical_witness_name(name_b)
+
+
 class ContradictionDetector:
+    # Cap on LLM pair-checks per query: 45 pairs ≈ 10 distinct witnesses.
+    # Checks run on max_workers threads, so worst case stays under ~10s.
+    MAX_PAIRS = 45
+
     def __init__(
         self,
         cache: Optional[ContradictionCache] = None,
         client: Optional[anthropic.Anthropic] = None,
         model: str = MODEL_ID,
+        max_workers: int = 8,
     ):
         self.cache = cache if cache is not None else make_cache()
         # 30s timeout — default is 10 minutes, which would hang /search/contradictions
@@ -73,38 +106,72 @@ class ContradictionDetector:
         # keep their own settings.
         self.client = client if client is not None else anthropic.Anthropic(timeout=30.0)
         self.model = model
+        self.max_workers = max_workers
 
     def detect(self, chunks: List[EmbeddedChunk], query: str) -> List[Contradiction]:
         """Find contradictions across the given chunks for this query.
 
-        Compares the highest-ranked chunk from each witness against every other
-        witness's highest-ranked chunk. The caller is expected to pass chunks
-        already ranked by search relevance (first per witness = best).
+        Groups chunks by (witness_name, source_type) and compares the
+        highest-ranked chunk of each group against every other group's.
+        The caller is expected to pass chunks already ranked by search
+        relevance (first per group = best).
         """
-        by_witness: dict[str, list[EmbeddedChunk]] = {}
+        groups: Dict[Tuple[str, str], List[EmbeddedChunk]] = {}
+        order: List[Tuple[str, str]] = []  # first-appearance = rank order
         for c in chunks:
-            by_witness.setdefault(c.chunk.witness_name, []).append(c)
+            key = (c.chunk.witness_name, c.chunk.metadata.source_type)
+            if key not in groups:
+                order.append(key)
+            groups.setdefault(key, []).append(c)
 
-        witnesses = list(by_witness)
+        pairs = [
+            (order[i], order[j])
+            for i in range(len(order))
+            for j in range(i + 1, len(order))
+        ]
+        if len(pairs) > self.MAX_PAIRS:
+            logger.info("Truncating %d candidate pairs to %d", len(pairs), self.MAX_PAIRS)
+            pairs = pairs[: self.MAX_PAIRS]
+        if not pairs:
+            return []
+
+        def check(pair: Tuple[Tuple[str, str], Tuple[str, str]]) -> Optional[ContradictionVerdict]:
+            a, b = groups[pair[0]][0], groups[pair[1]][0]
+            try:
+                return self._check_pair(a, b, query)
+            except Exception:
+                logger.exception(
+                    "Pair check failed: %s vs %s", pair[0][0], pair[1][0]
+                )
+                return None  # one bad call must not sink the whole request
+
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(pairs))) as pool:
+            verdicts = list(pool.map(check, pairs))
+
         contradictions: List[Contradiction] = []
-
-        for i, w_a in enumerate(witnesses):
-            for w_b in witnesses[i + 1:]:
-                a, b = by_witness[w_a][0], by_witness[w_b][0]
-                verdict = self._check_pair(a, b, query)
-                if verdict.contradicts:
-                    contradictions.append(
-                        Contradiction(
-                            witness_a=w_a,
-                            witness_b=w_b,
-                            chunk_a=a.chunk.content,
-                            chunk_b=b.chunk.content,
-                            claim_a=verdict.claim_a,
-                            claim_b=verdict.claim_b,
-                            confidence=verdict.confidence,
-                            explanation=verdict.explanation,
-                        )
-                    )
+        for (key_a, key_b), verdict in zip(pairs, verdicts):
+            if verdict is None or not verdict.contradicts:
+                continue
+            a, b = groups[key_a][0], groups[key_b][0]
+            contradictions.append(
+                Contradiction(
+                    witness_a=key_a[0],
+                    witness_b=key_b[0],
+                    chunk_a=a.chunk.content,
+                    chunk_b=b.chunk.content,
+                    claim_a=verdict.claim_a,
+                    claim_b=verdict.claim_b,
+                    confidence=verdict.confidence,
+                    explanation=verdict.explanation,
+                    source_a=key_a[1],
+                    source_b=key_b[1],
+                    page_a=a.chunk.metadata.page_number,
+                    page_b=b.chunk.metadata.page_number,
+                    role_a=a.chunk.metadata.role,
+                    role_b=b.chunk.metadata.role,
+                    same_person=_same_person(key_a, key_b),
+                )
+            )
 
         contradictions.sort(key=lambda c: c.confidence, reverse=True)
         return contradictions

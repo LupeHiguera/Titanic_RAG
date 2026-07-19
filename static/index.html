@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Titanic RAG - Search Witness Testimonies</title>
+    <meta name="description" content="Semantic search over the 1912 US Senate and British Wreck Commissioner's Titanic inquiries — with AI-detected contradictions between witnesses, cited to the original transcript pages.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚓</text></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
@@ -513,6 +515,11 @@
             color: var(--text-primary);
         }
 
+        .result-role {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
         .result-meta {
             display: flex;
             align-items: center;
@@ -748,6 +755,34 @@
             font-size: 0.85rem;
             font-weight: 600;
             color: var(--text-primary);
+        }
+
+        .contradiction-witness-role {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: -6px;
+        }
+
+        .contradiction-cite {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+            margin-top: -4px;
+        }
+
+        .same-person-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--gold);
+            background: var(--gold-muted);
+            border: 1px solid rgba(201, 168, 76, 0.35);
+            padding: 3px 10px;
+            border-radius: 100px;
         }
 
         .contradiction-claim {
@@ -986,7 +1021,7 @@
             <div class="container">
                 <div class="hero-eyebrow">Primary Source Research</div>
                 <h1>Search Titanic<br>Witness Testimonies</h1>
-                <p>Search 40,000+ testimony chunks across 158 witnesses from both the 1912 US Senate and British Wreck Commissioner's inquiries. Toggle "Show contradictions only" to see where witnesses disagreed.</p>
+                <p>Search the full witness testimony of the 1912 US Senate and British Wreck Commissioner's inquiries, cited to the original transcript pages. Toggle "Show contradictions only" to see where witnesses disagreed — including witnesses who contradicted themselves between the two inquiries.</p>
             </div>
         </section>
 
@@ -1078,7 +1113,7 @@
         <!-- Footer -->
         <footer class="footer">
             <div class="container">
-                <span class="footer-text">Titanic Historical RAG &middot; US Senate Inquiry, 1912</span>
+                <span class="footer-text">Titanic Historical RAG &middot; US Senate &amp; British Wreck Commissioner's Inquiries, 1912</span>
                 <div class="footer-links">
                     <a href="/documents">Documents</a>
                     <a href="/health">API Health</a>
@@ -1139,7 +1174,7 @@
 
             input.addEventListener('input', (e) => {
                 clearTimeout(debounce);
-                debounce = setTimeout(() => searchWitnesses(e.target.value.trim()), 200);
+                debounce = setTimeout(() => filterWitnesses(e.target.value.trim()), 120);
             });
 
             input.addEventListener('keydown', (e) => {
@@ -1156,14 +1191,13 @@
                 if (!input.contains(e.target) && !dropdown.contains(e.target)) hide();
             });
 
-            async function searchWitnesses(q) {
+            // The full witness list (~160 names) is loaded once at startup —
+            // filter it locally instead of hitting the server per keystroke.
+            function filterWitnesses(q) {
                 if (!q) { hide(); selectedWitness = ''; return; }
-                try {
-                    const res = await fetch(`/witnesses?search=${encodeURIComponent(q)}`);
-                    const data = await res.json();
-                    filtered = data.witnesses || [];
-                    render(filtered);
-                } catch (e) { hide(); }
+                const needle = q.toLowerCase();
+                filtered = availableWitnesses.filter(w => w.toLowerCase().includes(needle));
+                render(filtered);
             }
 
             function render(list) {
@@ -1174,11 +1208,11 @@
                     return;
                 }
                 dropdown.innerHTML = list.map((w, i) =>
-                    `<div class="witness-option" data-i="${i}" data-w="${w}">${w}</div>`
+                    `<div class="witness-option" data-i="${i}">${escapeHtml(w)}</div>`
                 ).join('');
                 dropdown.classList.add('show');
                 dropdown.querySelectorAll('.witness-option').forEach(opt =>
-                    opt.addEventListener('click', () => pick(opt.dataset.w))
+                    opt.addEventListener('click', () => pick(filtered[parseInt(opt.dataset.i, 10)]))
                 );
             }
 
@@ -1299,7 +1333,7 @@
                     displayResults(data);
                 }
             } catch (err) {
-                content.innerHTML = `<div class="error-msg">${err.message}</div>`;
+                content.innerHTML = `<div class="error-msg">${escapeHtml(err.message || 'Search failed')}</div>`;
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Search';
@@ -1327,15 +1361,16 @@
                 <div class="result-card">
                     <div class="result-top">
                         <div>
-                            <div class="result-witness">${r.witness_name}</div>
+                            <div class="result-witness">${escapeHtml(r.witness_name)}</div>
+                            ${r.role ? `<div class="result-role">${escapeHtml(r.role)}</div>` : ''}
                             <div class="result-meta">
-                                <span class="result-tag">${formatSource(r.source_type)}</span>
-                                <span class="result-tag">Page ${r.page_number}</span>
+                                <span class="result-tag">${escapeHtml(formatSource(r.source_type))}</span>
+                                <span class="result-tag">p. ${escapeHtml(String(r.page_number))}</span>
                             </div>
                         </div>
                         <div class="result-scores">
-                            <span class="score-badge score-similarity">${r.similarity_score}</span>
-                            <span class="score-badge score-relevance">${r.relevance_score}</span>
+                            <span class="score-badge score-similarity">${escapeHtml(String(r.similarity_score))}</span>
+                            <span class="score-badge score-relevance">${escapeHtml(String(r.relevance_score))}</span>
                         </div>
                     </div>
                     <div class="result-content">${formatHighlights(r.content)}</div>
@@ -1365,24 +1400,30 @@
                 <div class="contradiction-card">
                     <div class="contradiction-header">
                         <span class="contradiction-label">Contradiction detected</span>
+                        ${c.same_person ? '<span class="same-person-badge">⚖ Same person — both inquiries</span>' : ''}
                         <span class="confidence-badge">${Math.round(c.confidence * 100)}% confidence</span>
                     </div>
                     <div class="contradiction-pair">
-                        <div class="contradiction-witness">
-                            <div class="contradiction-witness-name">${escapeHtml(c.witness_a)}</div>
-                            <div class="contradiction-claim">${escapeHtml(c.claim_a)}</div>
-                            <div class="contradiction-quote">"${escapeHtml(c.chunk_a)}"</div>
-                        </div>
+                        ${contradictionSide(c.witness_a, c.role_a, c.source_a, c.page_a, c.claim_a, c.chunk_a)}
                         <div class="contradiction-vs">VS</div>
-                        <div class="contradiction-witness">
-                            <div class="contradiction-witness-name">${escapeHtml(c.witness_b)}</div>
-                            <div class="contradiction-claim">${escapeHtml(c.claim_b)}</div>
-                            <div class="contradiction-quote">"${escapeHtml(c.chunk_b)}"</div>
-                        </div>
+                        ${contradictionSide(c.witness_b, c.role_b, c.source_b, c.page_b, c.claim_b, c.chunk_b)}
                     </div>
                     <div class="contradiction-explanation">${escapeHtml(c.explanation)}</div>
                 </div>
             `).join('');
+        }
+
+        function contradictionSide(witness, role, source, page, claim, quote) {
+            const cite = [source ? formatSource(source) : '', page ? `p. ${page}` : '']
+                .filter(Boolean).join(' · ');
+            return `
+                <div class="contradiction-witness">
+                    <div class="contradiction-witness-name">${escapeHtml(witness)}</div>
+                    ${role ? `<div class="contradiction-witness-role">${escapeHtml(role)}</div>` : ''}
+                    ${cite ? `<div class="contradiction-cite">${escapeHtml(cite)}</div>` : ''}
+                    <div class="contradiction-claim">${escapeHtml(claim)}</div>
+                    <div class="contradiction-quote">"${escapeHtml(quote)}"</div>
+                </div>`;
         }
 
         function formatSource(type) {

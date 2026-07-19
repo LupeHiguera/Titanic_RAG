@@ -8,10 +8,23 @@ import re
 class ChunkMetadata:
     document_name: str
     source_type: str  # "us_inquiry", "british_inquiry", "other"
-    page_number: int
+    page_number: int  # printed/transcript page (citable), not raw PDF page
     credibility_score: float
     chunk_index: int
     total_chunks_for_witness: int
+    role: str = ""            # e.g. "2nd Officer, Titanic"
+    ship: str = ""            # e.g. "Titanic", "Californian"
+    witness_type: str = ""    # Officer / Crew / Passenger / Technical / Executive
+
+
+# Inline page markers: ingestion embeds ⟦p:N⟧ where the printed page changes
+# so each chunk can cite the page it actually came from. The glyphs never
+# occur in 1912 OCR text. Stripped from content after page assignment.
+PAGE_TAG = re.compile(r'⟦p:(\d+)⟧')
+
+
+def page_tag(page: int) -> str:
+    return f'⟦p:{page}⟧'
 
 
 @dataclass
@@ -45,31 +58,23 @@ class SenateBoundarySplitter(BoundarySplitter):
         if len(positions) < 2:
             return [text]
 
-        sections = []
-        i = 0
-        while i < len(positions):
-            start = positions[i]
-            next_senator = None
-            for j in range(i + 1, len(positions)):
-                segment = text[positions[j]:positions[j] + 30]
-                if segment.startswith('Senator'):
-                    if j > i + 1 or not text[start:start + 30].startswith('Senator'):
-                        next_senator = j
-                        break
-                    else:
-                        next_senator = j
-                        break
+        # A section starts at each Senator-led turn; witness turns (Mr. LOWE.)
+        # belong to the Senator turn that prompted them. The first speaker
+        # position starts a section regardless, and text before it (swearing-in
+        # narration, page tags) is kept as its own leading section.
+        boundaries = [p for p in positions if text.startswith('Senator', p)]
+        if not boundaries or boundaries[0] != positions[0]:
+            boundaries.insert(0, positions[0])
 
-            if next_senator is not None:
-                section = text[start:positions[next_senator]].strip()
-                if section:
-                    sections.append(section)
-                i = next_senator
-            else:
-                section = text[start:].strip()
-                if section:
-                    sections.append(section)
-                break
+        sections = []
+        lead = text[:boundaries[0]].strip()
+        if lead:
+            sections.append(lead)
+        for idx, start in enumerate(boundaries):
+            end = boundaries[idx + 1] if idx + 1 < len(boundaries) else len(text)
+            section = text[start:end].strip()
+            if section:
+                sections.append(section)
 
         return sections or [text]
 
@@ -98,6 +103,9 @@ class BritishBoundarySplitter(BoundarySplitter):
             return [text]
 
         sections = []
+        lead = text[:positions[0]].strip()
+        if lead:
+            sections.append(lead)  # swearing-in narration before the first Q
         for idx, start in enumerate(positions):
             end = positions[idx + 1] if idx + 1 < len(positions) else len(text)
             section = text[start:end].strip()
@@ -126,23 +134,33 @@ class IntelligentChunker:
                 testimony = context['testimony']
                 page_num = context.get('page_number', 1)
                 doc_name = context.get('document_name', 'Unknown')
+                role = context.get('role', '')
+                ship = context.get('ship', '')
+                witness_type = context.get('witness_type', '')
             else:
                 witness_name = getattr(context, 'witness', 'Unknown')
                 testimony = getattr(context, 'testimony', '')
                 page_num = getattr(context, 'page_number', 1)
                 doc_name = getattr(context, 'document_name', 'Unknown')
+                role = getattr(context, 'role', '')
+                ship = getattr(context, 'ship', '')
+                witness_type = getattr(context, 'witness_type', '')
 
             credibility_score = 0.0
             text_chunks = self._split_text_preserving_context(testimony)
+            paged_chunks = self._assign_pages(text_chunks, page_num)
 
-            for j, chunk_text in enumerate(text_chunks):
+            for j, (chunk_text, chunk_page) in enumerate(paged_chunks):
                 metadata = ChunkMetadata(
                     document_name=doc_name,
                     source_type=self._determine_source_type(doc_name),
-                    page_number=page_num,
+                    page_number=chunk_page,
                     credibility_score=credibility_score,
                     chunk_index=j,
-                    total_chunks_for_witness=len(text_chunks)
+                    total_chunks_for_witness=len(paged_chunks),
+                    role=role,
+                    ship=ship,
+                    witness_type=witness_type,
                 )
 
                 chunk = WitnessChunk(
@@ -154,23 +172,69 @@ class IntelligentChunker:
 
         return chunks
 
+    @staticmethod
+    def _assign_pages(text_chunks: List[str], start_page: int) -> List[tuple]:
+        """Resolve each chunk's citable page from inline ⟦p:N⟧ tags, then strip
+        the tags from the content. A chunk's page is the page in effect where it
+        starts; tags inside it advance the running page for later chunks.
+        Chunks that were only tags/whitespace are dropped."""
+        current_page = start_page
+        result = []
+        for chunk_text in text_chunks:
+            lead = PAGE_TAG.match(chunk_text.strip())
+            tags = PAGE_TAG.findall(chunk_text)
+            chunk_page = int(lead.group(1)) if lead else current_page
+            if tags:
+                current_page = int(tags[-1])
+            content = PAGE_TAG.sub(' ', chunk_text)
+            content = re.sub(r'[ \t]{2,}', ' ', content).strip()
+            if content:
+                result.append((content, chunk_page))
+        return result
+
     def _split_text_preserving_context(self, text: str) -> List[str]:
         if len(text) <= self.chunk_size:
             return [text]
 
         sections = self.splitter.split(text)
 
-        chunks = []
+        # Split oversized sections by sentence, then pack adjacent pieces back
+        # up toward chunk_size. Q&As in these transcripts are short (~140-200
+        # chars); one-per-chunk starves the embedder of context, so a chunk
+        # holds as many *whole* consecutive Q&As as fit.
+        pieces = []
         for section in sections:
             if len(section) <= self.chunk_size:
-                chunks.append(section)
+                pieces.append(section)
             else:
-                chunks.extend(self._split_by_sentences(section))
+                pieces.extend(self._split_by_sentences(section))
 
-        return self._add_overlap(chunks)
+        return self._add_overlap(self._pack_pieces(pieces))
+
+    def _pack_pieces(self, pieces: List[str]) -> List[str]:
+        """Greedily merge consecutive pieces up to chunk_size, never splitting
+        a piece (Q&A boundaries stay intact)."""
+        chunks: List[str] = []
+        buffer = ""
+        for piece in pieces:
+            candidate = f"{buffer}\n{piece}" if buffer else piece
+            if len(candidate) <= self.chunk_size:
+                buffer = candidate
+            else:
+                if buffer:
+                    chunks.append(buffer)
+                buffer = piece
+        if buffer:
+            chunks.append(buffer)
+        return chunks
+
+    # Sentence boundary: terminal punctuation, whitespace, then an uppercase
+    # letter or opening quote. Keeps decimal times ("11.40") and initials
+    # intact — the old [.!?]+ split shredded them and rewrote ?/! as periods.
+    _SENTENCE_BOUNDARY = re.compile(r'(?<=[.!?])\s+(?=[A-Z"“(])')
 
     def _split_by_sentences(self, text: str) -> List[str]:
-        sentences = re.split(r'[.!?]+', text)
+        sentences = self._SENTENCE_BOUNDARY.split(text)
         chunks = []
         current_chunk = ""
 
@@ -179,15 +243,13 @@ class IntelligentChunker:
             if not sentence:
                 continue
 
-            potential_chunk = current_chunk + " " + sentence + "."
-            potential_chunk = potential_chunk.strip()
-
+            potential_chunk = f"{current_chunk} {sentence}".strip()
             if len(potential_chunk) <= self.chunk_size:
                 current_chunk = potential_chunk
             else:
                 if current_chunk:
                     chunks.append(current_chunk)
-                current_chunk = sentence + "."
+                current_chunk = sentence
 
         if current_chunk:
             chunks.append(current_chunk)

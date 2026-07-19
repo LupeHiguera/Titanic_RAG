@@ -54,13 +54,23 @@ class DocumentIngestion:
         with fitz.open(str(pdf_path)) as doc:
             return {i + 1: page.get_text() for i, page in enumerate(doc)}
 
-    def _clean_extracted_text(self, text: str) -> str:
+    def clean_extracted_text(self, text: str) -> str:
         """Clean extracted PDF text of artifacts and formatting issues."""
         text = self._remove_control_characters(text)
+        text = self._remove_page_marker_lines(text)
         text = self._fix_bold_artifacts(text)
         text = self._fix_ocr_spacing(text)
         text = self._normalize_whitespace(text)
         return text
+
+    # Backwards-compatible alias (external callers used the private name).
+    _clean_extracted_text = clean_extracted_text
+
+    def _remove_page_marker_lines(self, text: str) -> str:
+        """Drop standalone `Page N` pagination lines. The citable page number
+        travels via ⟦p:N⟧ tags / chunk metadata instead, so these lines are
+        pure noise inside testimony content."""
+        return re.sub(r'^\s*Page\s+\d+\s*$', '', text, flags=re.MULTILINE)
 
     def _remove_control_characters(self, text: str) -> str:
         """Remove form feed and other control characters."""
@@ -93,8 +103,11 @@ class DocumentIngestion:
 
     def _fix_ocr_spacing(self, text: str) -> str:
         """Fix residual spacing errors not handled by pymupdf."""
-        # Fix broken hyphenated words: "brother -in-law" -> "brother-in-law"
-        text = re.sub(r'\b(\w+) - ?(\w+)\b', r'\1-\2', text)
+        # Fix broken hyphenated words: "brother -in-law" -> "brother-in-law".
+        # Only when the dash hugs the following word — a spaced dash on BOTH
+        # sides ("I said - well - about ten") is 1912 transcript punctuation,
+        # and joining it corrupts the testimony.
+        text = re.sub(r'\b(\w+) -(\w+)\b', r'\1-\2', text)
 
         # Apply known fixes (safety net for edge cases)
         for wrong, correct in self._known_ocr_fixes.items():
