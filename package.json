@@ -1,0 +1,17 @@
+{
+  "name": "titanic-inquiry-interface",
+  "private": true,
+  "scripts": {
+    "test:ui": "playwright test",
+    "lint:ui": "eslint static/archive.js Testing/UI playwright.config.cjs eslint.config.cjs",
+    "format:ui": "prettier --check static/index.html static/archive.css static/archive.js Testing/UI/*.cjs playwright.config.cjs eslint.config.cjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.56.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.9"
+  }
+}

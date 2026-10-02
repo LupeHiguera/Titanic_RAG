@@ -118,3 +118,56 @@ python Evals/run_retrieval_eval.py
 ## License
 
 Not yet licensed.
+
+## Offline development checks
+
+Install development tools with `pip install -r requirements-dev.txt`, then run
+`python -m pytest -q`. Tests block outbound socket connections and `.env`
+loading by default; two live embedding tests are skipped. Tests that return
+values instead of asserting now fail. No API credentials are needed.
+
+Live embedding checks require explicit opt-in:
+`python -m pytest --run-live Testing/Embeddings/test_real_embedding.py Testing/Embeddings/test_real_embedding_with_pdf.py`.
+These use OpenAI credentials and incur API costs; assertion/API failures fail
+the tests rather than returning a false-success result.
+
+`python Services/pinecone_upload.py --test` is a **live integration operation**:
+it may create a Pinecone index and calls OpenAI embeddings. `/health` may also
+initialize/create an index. Neither is an offline smoke test.
+
+Retrieval metrics use original retrieved **chunk positions**, including repeated
+witnesses. Recall counts each relevant witness once within the first K chunks;
+MRR uses the first relevant chunk's position. Historical evaluation numbers
+must be regenerated before comparing against the corrected metrics.
+
+Contradiction cache keys preserve A/B order and include the model, system prompt,
+and verdict schema. Legacy entries are bypassed, and reversing a pair requires
+one fresh check so directional claims and explanations remain correctly attributed.
+
+## Interface development (offline)
+
+The interface uses local CSS and JavaScript (`static/archive.css` and
+`static/archive.js`) with system fonts; it makes no health/index requests on
+page load. Witness names come from the read-only `/witnesses` endpoint.
+
+```bash
+npm ci
+npx playwright install chromium
+npm run test:ui
+npm run lint:ui
+npm run format:ui
+```
+
+If Chromium is already installed, use
+`CHROMIUM_PATH=/usr/bin/chromium npm run test:ui` instead of downloading a browser.
+The Playwright suite intercepts every request and serves local assets and
+explicitly illustrative fixtures. It never starts FastAPI or calls a provider.
+Desktop and mobile projects cover citations, comparison controls, witness
+selection/edit/clear, racing requests (including ignored aborts), empty/error
+states, excerpt disclosure, accessibility checks, and narrow-screen overflow.
+Set `UI_SCREENSHOT_DIR=/absolute/output/path` to save labeled fixture screenshots.
+
+The witness filter only applies after selecting a name; editing it invalidates
+that selection immediately. New searches cancel old requests and discard late
+responses. Comparison output is labeled as model interpretation, distinct from
+the transcript. An empty comparison response does not claim historical agreement.

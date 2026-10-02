@@ -44,13 +44,8 @@ def load_gold_set() -> List[Dict]:
 
 
 def witnesses_in_results(results) -> List[str]:
-    """Ordered list of witness names from a result list, deduped preserving rank."""
-    seen = []
-    for r in results:
-        name = r.chunk.chunk.witness_name
-        if name not in seen:
-            seen.append(name)
-    return seen
+    """One witness per retrieved chunk, preserving original ranks and repeats."""
+    return [r.chunk.chunk.witness_name for r in results]
 
 
 def reciprocal_rank(ranked_witnesses: List[str], relevant: Set[str]) -> float:
@@ -170,9 +165,10 @@ def render_md(main_run: Dict, sweep: Optional[List[Dict]]) -> str:
               "the top 5 retrieved chunks. This is the most user-facing metric — it "
               "reflects whether a typical user would see a relevant answer above the fold.")
     md.append("- **Recall @ K**: mean fraction of a query's relevant witnesses that "
-              "appear in the top K. Penalizes the system for missing relevant witnesses "
+              "appear in the top K retrieved chunks (counted once per witness). Penalizes the system for missing relevant witnesses "
               "when many testified on a topic. Lower than Hit Rate by design.")
-    md.append("- **MRR**: 1 / rank of the first relevant witness. Rewards systems "
+    md.append("- **MRR**: 1 / chunk rank of the first relevant witness; repeated witnesses "
+              "retain their original positions. Rewards systems "
               "that rank the right answer near the top, not just somewhere in top-K.\n")
 
     md.append("## Limitations\n")
