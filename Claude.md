@@ -75,7 +75,7 @@ pip install -r requirements.txt
 #                 ALLOWED_ORIGINS=http://localhost:8000,...  (default localhost; "*" for wildcard)
 #                 CACHE_BACKEND=sqlite                (default sqlite; "dynamodb" is a stub)
 
-# Verify Pinecone connection
+# LIVE: may create an index and calls paid OpenAI embeddings
 python Services/pinecone_upload.py --test
 
 # Full rebuild (deterministic IDs make ingest idempotent, but --clear-all
@@ -128,13 +128,13 @@ Request validation: `query` ≤500 chars, `top_k` 1–25, thresholds 0–1,
 
 ## Test suite state
 
-112 tests, all passing (`python -m pytest Testing/ -q`). Notable coverage:
+Run `python -m pytest -q` for the offline regression suite. Notable coverage:
 `Testing/Witnesses/test_attribution_fixes.py` (tie-breaks, bounds, page-map
 plausibility), `Testing/Chunking/test_page_tracking_and_packing.py` (⟦p:N⟧
 tags, packing, decimal-safe sentence splitting),
 `Testing/Contradictions/test_detector_grouping.py` ((witness, inquiry)
-grouping, same_person, failure tolerance). Tests requiring live
-OpenAI/Pinecone skip or error on missing credentials.
+grouping, same_person, failure tolerance). Live embedding tests require `--run-live` and credentials; the default suite
+blocks outbound sockets and dotenv loading. See README for safe test commands.
 `Evals/attribution_check.py` is the offline end-to-end attribution gate —
 it must report 70/70 US and 97/97 British witnesses covered.
 
@@ -210,7 +210,6 @@ Limits are env-tunable (see table above).
 | Medium | Re-run `Evals/run_retrieval_eval.py` whenever chunking changes — the gold set's Hit Rate/MRR are sensitive to chunk size and the packed chunks (2026-07) changed the distribution |
 | Low | Session-heading fallback: if a witness's caps-surname heading isn't found on their start page, their session starts at the top of the next page (a few lines of the previous witness may bleed in) |
 | Low | Roles in `BritishWitnessIndex` are hand-curated for major witnesses; ~30 minor Board-of-Trade officials default to "Master Mariner" / "Engineer Surveyor" and may be imprecise |
-| Low | 2 `PytestReturnNotNoneWarning`s (`test_bold_artifacts.py`, `test_real_embedding_with_pdf.py`) |
 
 ## File map (rough)
 

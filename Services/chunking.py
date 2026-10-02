@@ -267,7 +267,9 @@ class IntelligentChunker:
             current_chunk = chunks[i]
 
             prev_words = prev_chunk.split()
-            overlap_words = prev_words[-min(self.overlap_size // 10, len(prev_words) // 2):]
+            overlap_count = min(self.overlap_size // 10, len(prev_words) // 2)
+            # [-0:] is the entire list, not an empty tail.
+            overlap_words = prev_words[-overlap_count:] if overlap_count > 0 else []
 
             if overlap_words:
                 overlap_text = " ".join(overlap_words)

@@ -14,6 +14,7 @@ LLM.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -177,9 +178,20 @@ class ContradictionDetector:
         return contradictions
 
     def _cache_key(self, a: EmbeddedChunk, b: EmbeddedChunk, query: str) -> str:
-        ids = sorted([_chunk_id(a), _chunk_id(b)])
-        q = hashlib.sha256(query.strip().lower().encode("utf-8")).hexdigest()[:16]
-        return f"{ids[0]}:{ids[1]}:{q}"
+        # Claims AND explanation are directional (A/B). Keep pair order rather
+        # than reusing an unordered verdict that can misattribute testimony.
+        # v2 also isolates legacy entries and changes in model/prompt/schema.
+        payload = {
+            "chunks": [_chunk_id(a), _chunk_id(b)],
+            "query": query,
+            "model": self.model,
+            "system_prompt": SYSTEM_PROMPT,
+            "schema": ContradictionVerdict.model_json_schema(),
+        }
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return f"v2:{digest}"
 
     def _check_pair(
         self, a: EmbeddedChunk, b: EmbeddedChunk, query: str
